@@ -255,29 +255,6 @@ init_game()
 	return 0;
 }
 
-#if 0
-void
-do_restrict(dbref player, const char *arg)
-{
-	if (!Wizard(player)) {
-		notify(player, "Permission Denied.");
-		return;
-	}
-
-	if (!strcmp(arg, "on")) {
-		optflags |= OPT_WIZONLY;
-		notify(player, "Login access is now restricted to wizards only.");
-	} else if (!strcmp(arg, "off")) {
-		optflags &= ~OPT_WIZONLY;
-		notify(player, "Login access is now unrestricted.");
-	} else {
-		notify_fmt(player, "Restricted connection mode is currently %s.",
-		(optflags & OPT_WIZONLY) ? "on" : "off"
-		);
-	}
-}
-#endif
-
 /* use this only in process_command */
 #define Matched(string) if (!string_prefix(string, command)) \
 	goto bad; else matched = 1;

@@ -52,7 +52,7 @@
 #include "noise.h"
 
 #define DESCR_ITER(di_d) \
-	for (di_d = &descr_map[sockfd + 1]; \
+	for (di_d = &descr_map[wsfd + 1]; \
 	     di_d < &descr_map[FD_SETSIZE]; \
 	     di_d++) \
 		if (!FD_ISSET(di_d->fd, &readfds) \
@@ -90,12 +90,18 @@ typedef struct descr_st {
 	/* int quota; */
 } descr_t;
 
-core_command_t *cmds_hashed[64] = {
-	[ 0 ... 63 ] = NULL,
+core_command_t *cmds_hashed[254] = {
+	[ 0 ... 253 ] = NULL,
 };
+
+extern void do_auth(command_t *cmd);
 
 core_command_t cmds[] = {
 	{
+		.name = "auth",
+		.cb = &do_auth,
+		.flags = CF_NOAUTH,
+	}, {
 		.name = "action",
 		.cb = &do_action,
 	}, {
@@ -365,6 +371,7 @@ core_command_t cmds[] = {
 		.cb = &do_rob,
 	}, {
 		.name = "say",
+		.flags = CF_EOL,
 		.cb = &do_say,
 	}, {
 		.name = "score",
@@ -415,7 +422,7 @@ int shutdown_flag = 0;
 static const char *create_fail =
 		"Either there is already a player with that name, or that name is illegal.\r\n";
 
-static int sockfd, nextfd;
+static int sockfd, wsfd, nextfd;
 descr_t descr_map[FD_SETSIZE];
 
 void
@@ -433,7 +440,7 @@ command_debug(command_t *cmd, char *label)
 	warn("\n");
 }
 
-static command_t
+static inline command_t
 command_new(descr_t *d, char *input, size_t len)
 {
 	command_t cmd;
@@ -470,14 +477,14 @@ command_new(descr_t *d, char *input, size_t len)
 	return cmd;
 }
 
-int
+static inline int
 command_idx(command_t *cmd)
 {
 	noise_t h = uhash(cmd->argv[0], strlen(cmd->argv[0]), 88);
 	return h & 0xff;
 }
 
-core_command_t *
+static inline core_command_t *
 command_match(command_t *cmd) {
 	core_command_t *cc = cmds_hashed[command_idx(cmd)];
 	char *a, *b;
@@ -510,14 +517,17 @@ command_t command_new_null(int descr, ref_t player) {
 	return ret;
 }
 
-static void
+static inline void
 commands_init() {
 	int i;
 
 	for (i = 0; i < sizeof(cmds) / sizeof(core_command_t); i++) {
 		const char *name = cmds[i].name;
 		noise_t h = uhash((void *) name, strlen(name), 88);
-		cmds_hashed[h & 0xff] = &cmds[i];
+		int idx = h & 0xff;
+		if (cmds_hashed[idx] != NULL)
+			warn("%s collides with something else\n", name);
+		cmds_hashed[idx] = &cmds[i];
 	}
 }
 
@@ -668,6 +678,27 @@ descr_inband(descr_t *d, const char *s)
 	return descr_write(d, s, strlen(s));
 }
 
+typedef struct {
+	descr_t *d;
+	int *darr, dcount, di;
+} pdi_t;
+
+#define PLAYER_DESCR_ITER(pdi, player) \
+    pdi.darr = get_player_descrs(player, &pdi.dcount); \
+    for (pdi.di = 0; pdi.di < pdi.dcount; pdi.di++) \
+	    if ((pdi.d = descrdata_by_descr(pdi.darr[pdi.di])))
+
+static inline int
+player_inband(dbref player, char *buf)
+{
+	pdi_t pdi;
+
+	PLAYER_DESCR_ITER(pdi, player)
+		descr_inband(pdi.d, buf);
+
+	return pdi.dcount;
+}
+
 int
 notify_nolisten(dbref player, const char *msg, int isprivate)
 {
@@ -678,9 +709,6 @@ notify_nolisten(dbref player, const char *msg, int isprivate)
 	char *ptr1;
 	const char *ptr2;
 	dbref ref;
-	int di;
-	int* darr;
-	int dcount;
 
 	ptr2 = msg;
 	while (ptr2 && *ptr2) {
@@ -693,11 +721,8 @@ notify_nolisten(dbref player, const char *msg, int isprivate)
 		if (*ptr2 == '\r')
 			ptr2++;
 
-		darr = get_player_descrs(player, &dcount);
-		for (di = 0; di < dcount; di++) {
-			descr_inband(descrdata_by_descr(darr[di]), buf);
-			if (firstpass) retval++;
-		}
+		if (firstpass)
+			retval += player_inband(player, buf);
 
 #if ZOMBIES
 		if ((Typeof(player) == TYPE_THING) && (FLAGS(player) & ZOMBIE) &&
@@ -736,11 +761,8 @@ notify_nolisten(dbref player, const char *msg, int isprivate)
 							 (int)(BUFFER_LEN - (strlen(prefix) + 2)), buf);
 					}
 
-					darr = get_player_descrs(OWNER(player), &dcount);
-					for (di = 0; di < dcount; di++) {
-						descr_inband(descrdata_by_descr(darr[di]), buf2);
-						if (firstpass) retval++;
-					}
+					if (firstpass)
+						retval += player_inband(player, buf);
 				}
 			}
 		}
@@ -775,38 +797,43 @@ notify_from_echo(dbref from, dbref player, const char *msg, int isprivate)
 		    "~olisten", ptr, LISTEN_MLEV, 0, 1);
 #endif
 
-	if (Typeof(player) == TYPE_THING && (FLAGS(player) & VEHICLE) &&
-		(!(FLAGS(player) & DARK) || Wizard(OWNER(player))))
-	{
-		dbref ref;
+	dbref ref;
 
-		ref = getloc(player);
-		if (Wizard(OWNER(player)) || ref == NOTHING ||
-			Typeof(ref) != TYPE_ROOM || !(FLAGS(ref) & VEHICLE)
-				) {
-			if (!isprivate && getloc(from) == getloc(player)) {
-				char buf[BUFFER_LEN];
-				char pbuf[BUFFER_LEN];
-				const char *prefix;
-				char ch = *match_args;
-				command_t cmd_pp = command_new_null(-1, from);
+	if (!(Typeof(player) == TYPE_THING && (FLAGS(player) & VEHICLE) &&
+		(!(FLAGS(player) & DARK) || Wizard(OWNER(player)))))
 
-				*match_args = '\0';
-				prefix = do_parse_prop(&cmd_pp, player, MESGPROP_OECHO, "(@Oecho)", pbuf, sizeof(pbuf), MPI_ISPRIVATE);
-				*match_args = ch;
+		goto out;
 
-				if (!prefix || !*prefix)
-					prefix = "Outside>";
-				snprintf(buf, sizeof(buf), "%s %.*s", prefix, (int)(BUFFER_LEN - (strlen(prefix) + 2)), msg);
-				ref = DBFETCH(player)->contents;
-				while (ref != NOTHING) {
-					notify_filtered(from, ref, buf, isprivate);
-					ref = DBFETCH(ref)->next;
-				}
-			}
-		}
+	ref = getloc(player);
+
+	if (!(Wizard(OWNER(player)) || ref == NOTHING ||
+	    Typeof(ref) != TYPE_ROOM || !(FLAGS(ref) & VEHICLE)
+	   ) || isprivate || getloc(from != getloc(player)))
+
+		goto out;
+
+	char buf[BUFFER_LEN];
+	char pbuf[BUFFER_LEN];
+	const char *prefix;
+	char ch = *match_args;
+	command_t cmd_pp = command_new_null(-1, from);
+
+	*match_args = '\0';
+	prefix = do_parse_prop(&cmd_pp, player, MESGPROP_OECHO, "(@Oecho)", pbuf, sizeof(pbuf), MPI_ISPRIVATE);
+	*match_args = ch;
+
+	if (!prefix || !*prefix)
+		prefix = "Outside>";
+
+	snprintf(buf, sizeof(buf), "%s %.*s", prefix, (int)(BUFFER_LEN - (strlen(prefix) + 2)), msg);
+
+	ref = DBFETCH(player)->contents;
+	while (ref != NOTHING) {
+		notify_filtered(from, ref, buf, isprivate);
+		ref = DBFETCH(ref)->next;
 	}
 
+out:
 	return notify_filtered(from, player, msg, isprivate);
 }
 
@@ -851,24 +878,6 @@ int
 msec_diff(struct timeval now, struct timeval then)
 {
 	return ((now.tv_sec - then.tv_sec) * 1000 + (now.tv_usec - then.tv_usec) / 1000);
-}
-
-struct timeval
-msec_add(struct timeval t, int x)
-{
-	t.tv_sec += x / 1000;
-	t.tv_usec += (x % 1000) * 1000;
-	if (t.tv_usec >= 1000000) {
-		t.tv_sec += t.tv_usec / 1000000;
-		t.tv_usec = t.tv_usec % 1000000;
-	}
-	return t;
-}
-
-void
-goodbye_user(descr_t *d)
-{
-	descr_inband(d, "\r\n" LEAVE_MESSAGE "\r\n\r\n");
 }
 
 extern void purge_free_frames(void);
@@ -1055,8 +1064,8 @@ announce_connect(command_t *cmd)
 	return;
 }
 
-int
-auth(command_t *cmd)
+void
+do_auth(command_t *cmd)
 {
 	int descr = cmd->fd;
 	char *user = cmd->argv[1];
@@ -1073,7 +1082,7 @@ auth(command_t *cmd)
                            : PLAYERMAX_BOOTMESG);
                 descr_inband(d, "\r\n");
 		d->flags |= DF_BOOTED;
-                return 1;
+		return;
         }
 
         if (player == NOTHING) {
@@ -1085,7 +1094,7 @@ auth(command_t *cmd)
                         /*         web_logout(d->fd); */
 
                         warn("FAILED CREATE %s on fd %d", user, d->fd);
-                        return 1;
+			return;
                 }
 
                 warn("CREATED %s(%d) on fd %d",
@@ -1099,7 +1108,7 @@ auth(command_t *cmd)
         cmd->player = d->player = player;
         remember_player_descr(player, d->fd);
         /* cks: someone has to initialize this somewhere. */
-        PLAYER_SET_BLOCK(d->player, 0);
+        /* PLAYER_SET_BLOCK(d->player, 0); */
         welcome_user(d);
         spit_file(player, MOTD_FILE);
         announce_connect(cmd);
@@ -1117,7 +1126,7 @@ auth(command_t *cmd)
 	do_view(cmd);
         look_room(cmd, getloc(player), 0);
 
-        return 0;
+	return;
 }
 
 static inline int
@@ -1148,7 +1157,7 @@ do_v(command_t *cmd, char const *cmdstr)
 	return s - cmdstr;
 }
 
-void
+static inline void
 command_process(command_t *cmd)
 {
 	if (cmd->argc < 1) {
@@ -1160,68 +1169,85 @@ command_process(command_t *cmd)
 	dbref player = cmd->player;
 	int descr = cmd->fd;
 
-	pos_t pos;
-	map_where(pos, getloc(cmd->player));
-
 	command_debug(cmd, "command_process");
 	warn("command_process %s", command);
 
-        // set current descriptor (needed for death)
-        CBUG(GETLID(player) < 0);
-        mobi_t *liv = MOBI(player);
-        liv->descr = descr;
-
 	/* robustify player */
-	if (player < 0 || player >= db_top ||
-		(Typeof(player) != TYPE_PLAYER && Typeof(player) != TYPE_THING)) {
+	if (player >= 0 && (player >= db_top ||
+	    (Typeof(player) != TYPE_PLAYER && Typeof(player) != TYPE_THING))) {
 		warn("process_command: bad player %d", player);
 		return;
 	}
 
-	/* if player is a wizard, and uses overide token to start line... */
-	/* ... then do NOT run actions, but run the command they specify. */
-	if (!(TrueWizard(OWNER(player)) && (*command == OVERIDE_TOKEN))
-	    && can_move(cmd, command, 0))
-	{
-		go_move(cmd, command, 0);	/* command is exact match for exit */
-		*match_args = 0;
-		*match_cmdname = 0;
-		goto out;
-	}
+        // set current descriptor (needed for death)
+	if (player >= 0) {
+		pos_t pos;
+		map_where(pos, getloc(cmd->player));
 
-	for (; command_n < cmd->argc; command_n ++)
-	{
-		command = cmd->argv[command_n];
-		core_command_t *cmd_i = command_match(cmd);
+		CBUG(GETLID(player) < 0);
+		mobi_t *liv = MOBI(player);
+		liv->descr = descr;
 
-		if (cmd_i) {
-			cmd_i->cb(cmd);
-			// TODO get next command
-			break;
+		/* if player is a wizard, and uses overide token to start line... */
+		/* ... then do NOT run actions, but run the command they specify. */
+		if (!(TrueWizard(OWNER(player)) && (*command == OVERIDE_TOKEN))
+		    && can_move(cmd, command, 0))
+		{
+			go_move(cmd, command, 0);	/* command is exact match for exit */
+			*match_args = 0;
+			*match_cmdname = 0;
+			goto out;
 		}
 
-		int matched;
-		command += do_v(cmd, command);
-		if (*command == COMMAND_TOKEN) {
-			command++;
-			matched = 1;
-			CBUG(1);
-		} else if (*command == '\0') {
-			continue;
-		} else
-			break;
+		for (; command_n < cmd->argc; command_n ++)
+		{
+			command = cmd->argv[command_n];
+			core_command_t *cmd_i = command_match(cmd);
+
+			if (cmd_i) {
+				if ((cmd_i->flags & CF_EOL)) {
+					char buf[BUFSIZ];
+					char *p = buf;
+					int i;
+					for (i = 1; i <= cmd->argc ; i++)
+						p += sprintf(p, "%s ", cmd->argv[i]);
+					*(p - 2) = '\0';
+					cmd->argv[1] = buf;
+					cmd_i->cb(cmd);
+				} else
+					cmd_i->cb(cmd);
+				break;
+			}
+
+			int matched;
+			command += do_v(cmd, command);
+			if (*command == COMMAND_TOKEN) {
+				command++;
+				matched = 1;
+				CBUG(1);
+			} else if (*command == '\0') {
+				continue;
+			} else
+				break;
 			/* goto bad; */
-	}
+		}
 out:
-	{
-		pos_t pos2;
-		map_where(pos2, getloc(player));
-		if (MORTON_READ(pos2) != MORTON_READ(pos))
-			do_view(cmd);
+		{
+			pos_t pos2;
+			map_where(pos2, getloc(player));
+			if (MORTON_READ(pos2) != MORTON_READ(pos))
+				do_view(cmd);
+		}
+	} else {
+		core_command_t *cmd_i = command_match(cmd);
+
+		if (cmd_i && (cmd_i->flags & CF_NOAUTH))
+			cmd_i->cb(cmd);
 	}
+
 }
 
-void
+static inline void
 descr_process(descr_t *d, char *input, size_t input_len)
 {
 	warn("descr_process %d\n", d->fd);
@@ -1231,26 +1257,17 @@ descr_process(descr_t *d, char *input, size_t input_len)
 	if (!cmd.argc)
 		return;
 
-	if (d->flags & DF_CONNECTED) {
-		command_process(&cmd);
-		return;
-	}
-
-	if (cmd.argc != 3)
-		return;
-
-	if (*cmd.argv[0] == 'c')
-		auth(&cmd);
-	else
-		welcome_user(d);
+	command_process(&cmd);
 }
 
-void queue_init(queue_t *q) {
+static inline void
+queue_init(queue_t *q)
+{
 	q->p = q->buf;
 	q->len = 0;
 }
 
-int
+static inline int
 descr_read(descr_t *d)
 {
 	queue_t *q = &d->inband.input;
@@ -1271,12 +1288,13 @@ descr_read(descr_t *d)
 	/* return queue_read(d, &d->inband.input); */
 }
 
-descr_t *
-descr_next() {
-	return &descr_map[nextfd];
+static inline descr_t *
+descr_next()
+{
+	return &descr_map[nextfd++];
 }
 
-descr_t *
+static inline descr_t *
 descr_new()
 {
 	descr_t *d = descr_next();
@@ -1316,7 +1334,7 @@ descr_new()
 	return d;
 }
 
-void
+static inline void
 announce_disconnect(descr_t *d)
 {
 	command_t cmd = command_new_null(d->fd, d->player);
@@ -1342,7 +1360,7 @@ announce_disconnect(descr_t *d)
 	d->flags = 0;
 	d->player = NOTHING;
 
-    forget_player_descr(player, d->fd);
+	forget_player_descr(player, d->fd);
 
 	/* queue up all _connect programs referred to by properties */
 	envpropqueue(&cmd, getloc(player), NOTHING, player, NOTHING,
@@ -1354,7 +1372,7 @@ announce_disconnect(descr_t *d)
 	DBDIRTY(player);
 }
 
-void
+static inline void
 descr_close(descr_t *d)
 {
 	if (d->flags & DF_CONNECTED) {
@@ -1369,34 +1387,35 @@ descr_close(descr_t *d)
 		memset(d, 0, sizeof(descr_t));
 }
 
-int
+static inline int
 make_socket(int port)
 {
 	int opt;
 	struct sockaddr_in server;
+	int fd;
 
-	sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	fd = socket(AF_INET, SOCK_STREAM, 0);
 
-	if (sockfd < 0) {
-		perror("creating stream socket");
-		exit(3);
+	if (fd < 0) {
+		perror("socket");
+		return -1;
 	}
 
 	opt = 1;
-	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (char *) &opt, sizeof(opt)) < 0) {
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *) &opt, sizeof(opt)) < 0) {
 		perror("setsockopt");
-		exit(1);
+		return -1;
 	}
 
 	opt = 1;
-	if (setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, (char *) &opt, sizeof(opt)) < 0) {
+	if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (char *) &opt, sizeof(opt)) < 0) {
 		perror("setsockopt");
-		exit(1);
+		return -1;
 	}
 
 	/*
 	opt = 240;
-	if (setsockopt(sockfd, SOL_TCP, TCP_KEEPIDLE, (char *) &opt, sizeof(opt)) < 0) {
+	if (setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, (char *) &opt, sizeof(opt)) < 0) {
 		perror("setsockopt");
 		exit(1);
 	}
@@ -1406,19 +1425,16 @@ make_socket(int port)
 	server.sin_addr.s_addr = INADDR_ANY;
 	server.sin_port = htons(port);
 
-	if (bind(sockfd, (struct sockaddr *) &server, sizeof(server))) {
-		perror("binding stream socket");
-		close(sockfd);
-		exit(4);
+	if (bind(fd, (struct sockaddr *) &server, sizeof(server))) {
+		perror("bind");
+		close(fd);
+		return -1;
 	}
 
-	FD_ZERO(&readfds);
-	FD_ZERO(&writefds);
-	FD_SET(sockfd, &readfds);
-	descr_map[0].fd = sockfd;
+	FD_SET(fd, &readfds_new);
 
-	listen(sockfd, 5);
-	return sockfd;
+	listen(fd, 5);
+	return fd;
 }
 
 int
@@ -1429,6 +1445,9 @@ shovechars()
 	descr_t *d;
 	int avail_descriptors;
 
+	FD_ZERO(&readfds);
+	FD_ZERO(&writefds);
+
 	sockfd = make_socket(TINYPORT);
 
 	if (sockfd <= 0) {
@@ -1436,8 +1455,9 @@ shovechars()
 		return sockfd;
 	}
 
+	descr_map[0].fd = sockfd;
+
 	nextfd = sockfd + 1;
-	FD_SET(sockfd, &readfds_new);
 	warn("shovechars %d\n", sockfd);
 
 	avail_descriptors = sysconf(_SC_OPEN_MAX) - 5;
@@ -1456,13 +1476,12 @@ shovechars()
 		/* process_commands(); */
 		do_tick();
 
-		DESCR_ITER(d) {
+		DESCR_ITER(d)
 			if (d->flags & DF_BOOTED) {
-				goodbye_user(d);
+				descr_inband(d, "\r\n" LEAVE_MESSAGE "\r\n\r\n");
 				d->flags ^= DF_BOOTED;
 				descr_close(d);
 			}
-		}
 
 		if (global_dumpdone != 0) {
 			wall(DUMPING_MESG);
@@ -1535,58 +1554,29 @@ wall_wizards(const char *msg)
 int
 boot_off(dbref player)
 {
-    int* darr;
-    int dcount;
-	descr_t *last = NULL;
+	pdi_t pdi;
 
-	darr = get_player_descrs(player, &dcount);
-	if (darr) {
-        last = descrdata_by_descr(darr[0]);
-	}
-
-	if (last) {
-		last->flags |= DF_BOOTED;
+	PLAYER_DESCR_ITER(pdi, player) {
+		pdi.d->flags |= DF_BOOTED;
 		/* descr_close(last); */
-		return 1;
 	}
-	return 0;
+
+	return !pdi.dcount;
 }
 
 void
 boot_player_off(dbref player)
 {
-    int di;
-    int* darr;
-    int dcount;
-    descr_t *d;
- 
-	darr = get_player_descrs(player, &dcount);
-    for (di = 0; di < dcount; di++) {
-        d = descrdata_by_descr(darr[di]);
-        if (d) {
-            d->flags = DF_BOOTED;
-        }
-    }
+	pdi_t pdi;
+
+	PLAYER_DESCR_ITER(pdi, player)
+		pdi.d->flags = DF_BOOTED;
 }
 
 void
 emergency_shutdown(void)
 {
 	close_sockets("\r\nEmergency shutdown due to server crash.");
-}
-
-char *
-time_format_1(long dt)
-{
-	register struct tm *delta;
-	static char buf[64];
-
-	delta = gmtime((time_t *) &dt);
-	if (delta->tm_yday > 0)
-		snprintf(buf, sizeof(buf), "%dd %02d:%02d", delta->tm_yday, delta->tm_hour, delta->tm_min);
-	else
-		snprintf(buf, sizeof(buf), "%02d:%02d", delta->tm_hour, delta->tm_min);
-	return buf;
 }
 
 void
@@ -1632,17 +1622,15 @@ dump_users(descr_t *e, char *user)
 			snprintf(pbuf, sizeof(pbuf), "%.*s(#%d)", PLAYER_NAME_LIMIT + 1,
 				 NAME(d->player), (int) d->player);
 			snprintf(buf, sizeof(buf),
-				 "%-*s [%6d] %10s %c%c\r\n",
+				 "%-*s [%6d] %c%c\r\n",
 				 PLAYER_NAME_LIMIT + 10, pbuf,
 				 (int) DBFETCH(d->player)->location,
-				 time_format_1(now - d->connected_at),
 				 ((FLAGS(d->player) & INTERACTIVE) ? '*' : ' '),
 				 secchar);
 		} else {
-			snprintf(buf, sizeof(buf), "%-*s %10s %c%c\r\n",
+			snprintf(buf, sizeof(buf), "%-*s %c%c\r\n",
 				 (int)(PLAYER_NAME_LIMIT + 1),
 				 NAME(d->player),
-				 time_format_1(now - d->connected_at),
 				 ((FLAGS(d->player) & INTERACTIVE) ? '*' : ' '),
 				 secchar);
 		}
@@ -1743,38 +1731,6 @@ descrdata_by_descr(int c)
 }
 
 /*** JME ***/
-
-int
-dbref_first_descr(dbref c)
-{
-	int dcount;
-	int* darr;
-
-	darr = get_player_descrs(c, &dcount);
-	if (dcount > 0) {
-		return darr[dcount - 1];
-	} else {
-		return -1;
-	}
-}
-
-dbref
-partial_pmatch(const char *name)
-{
-	descr_t *d;
-	dbref last = NOTHING;
-
-	d = descriptor_list;
-	DESCR_ITER(d) if (string_prefix(NAME(d->player), name)) {
-		if (last != NOTHING) {
-			last = AMBIGUOUS;
-			break;
-		}
-		last = d->player;
-	}
-
-	return last;
-}
 
 void
 art(int descr, const char *art)

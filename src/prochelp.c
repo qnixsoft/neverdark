@@ -70,7 +70,7 @@ struct topiclist *topichead;
 struct topiclist *secthead;
 
 
-void
+static void
 add_section(const char *str)
 {
 	struct topiclist *ptr, *top;
@@ -92,7 +92,7 @@ add_section(const char *str)
 	ptr->next = top;
 }
 
-void
+static inline void
 add_topic(const char *str)
 {
 	struct topiclist *ptr, *top;
@@ -135,7 +135,7 @@ add_topic(const char *str)
 	ptr->next = top;
 }
 
-char*
+static inline char*
 escape_html(char* buf, int buflen, const char* in)
 {
 	char* out = buf;
@@ -161,7 +161,7 @@ escape_html(char* buf, int buflen, const char* in)
 	return buf;
 }
 
-void
+static inline void
 print_section_topics(FILE * f, FILE * hf, const char *whichsect)
 {
 	struct topiclist *ptr;
@@ -262,17 +262,7 @@ print_section_topics(FILE * f, FILE * hf, const char *whichsect)
 	}
 }
 
-void
-print_all_section_topics(FILE * f, FILE * hf)
-{
-	struct topiclist *sptr;
-
-	for (sptr = secthead; sptr; sptr = sptr->next) {
-		print_section_topics(f, hf, sptr->section);
-	}
-}
-
-void
+static inline void
 print_sections(FILE * f, FILE * hf, int cols)
 {
 	struct topiclist *sptr;
@@ -327,7 +317,7 @@ print_sections(FILE * f, FILE * hf, int cols)
 	fprintf(f, " \nUse '%s <topicname>' to get more information on a topic.\n", doccmd);
 }
 
-void
+static inline void
 print_topics(FILE * f, FILE * hf)
 {
 	struct topiclist *ptr;
@@ -424,7 +414,7 @@ print_topics(FILE * f, FILE * hf)
 	fprintf(f, " \nUse '%s <topicname>' to get more information on a topic.\n", doccmd);
 }
 
-int
+static inline int
 find_topics(FILE * infile)
 {
 	char buf[4096];
@@ -494,8 +484,7 @@ find_topics(FILE * infile)
 	return (longest);
 }
 
-
-void
+static inline void
 process_lines(FILE * infile, FILE * outfile, FILE * htmlfile, int cols)
 {
 	FILE *docsfile;

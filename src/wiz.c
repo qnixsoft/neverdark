@@ -434,7 +434,7 @@ do_force(int descr, dbref player, const char *what, char *command)
 	force_prog=NOTHING;
 	/* Technically, force_level must be 0 at this point, regardless. */
 	force_level++;
-	process_command(dbref_first_descr(victim), victim, command);
+	process_command(cmd->fd, victim, command);
 	force_level--;
 	force_prog=NOTHING;
 }
