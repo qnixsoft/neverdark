@@ -50,12 +50,13 @@
 #undef NDEBUG
 #include "debug.h"
 #include "noise.h"
+#include "ws.h"
 
 #define DESCR_ITER(di_d) \
-	for (di_d = &descr_map[wsfd + 1]; \
+	for (di_d = &descr_map[sockfd + 1]; \
 	     di_d < &descr_map[FD_SETSIZE]; \
 	     di_d++) \
-		if (!FD_ISSET(di_d->fd, &readfds) \
+		if (!FD_ISSET(di_d->fd, &activefds) \
 		    || !(di_d->flags & DF_CONNECTED)) \
 			continue; \
 		else
@@ -63,6 +64,7 @@
 enum descr_flags {
 	DF_CONNECTED = 1,
 	DF_BOOTED = 2,
+	DF_WEBSOCKET = 4,
 };
 
 struct ws {
@@ -95,11 +97,16 @@ core_command_t *cmds_hashed[254] = {
 };
 
 extern void do_auth(command_t *cmd);
+extern void do_httpget(command_t *cmd);
 
 core_command_t cmds[] = {
 	{
 		.name = "auth",
 		.cb = &do_auth,
+		.flags = CF_NOAUTH,
+	}, {
+		.name = "GET",
+		.cb = &do_httpget,
 		.flags = CF_NOAUTH,
 	}, {
 		.name = "action",
@@ -330,9 +337,6 @@ core_command_t cmds[] = {
 	}, {
 		.name = "look_at",
 		.cb = &do_look_at,
-	}, {
-		.name = "leave",
-		.cb = &do_leave,
 	/* }, { */
 	/* 	.name = "move", */
 	/* 	.cb = &do_move, */
@@ -360,12 +364,6 @@ core_command_t cmds[] = {
 	}, {
 		.name = "pose",
 		.cb = &do_pose,
-	}, {
-		.name = "drop",
-		.cb = &do_drop,
-	}, {
-		.name = "look_at",
-		.cb = &do_look_at,
 	}, {
 		.name = "rob",
 		.cb = &do_rob,
@@ -395,12 +393,6 @@ core_command_t cmds[] = {
 		.name = "status",
 		.cb = &do_status,
 	}, {
-		.name = "get",
-		.cb = &do_get,
-	}, {
-		.name = "drop",
-		.cb = &do_drop,
-	}, {
 		.name = "train",
 		.cb = &do_train,
 	}, {
@@ -412,7 +404,7 @@ core_command_t cmds[] = {
 	},
 };
 
-fd_set readfds, readfds_new, writefds;
+fd_set activefds, readfds, writefds;
 descr_t *descriptor_list = NULL;
 
 #define MAX_LISTEN_SOCKS 16
@@ -422,7 +414,7 @@ int shutdown_flag = 0;
 static const char *create_fail =
 		"Either there is already a player with that name, or that name is illegal.\r\n";
 
-static int sockfd, wsfd, nextfd;
+static int sockfd, nextfd;
 descr_t descr_map[FD_SETSIZE];
 
 void
@@ -458,6 +450,9 @@ command_new(descr_t *d, char *input, size_t len)
 	cmd.argc++;
 
 	for (; p < input + len; p++) {
+		if (*p == '\r')
+			break;
+
 		if (*p != ' ')
 			continue;
 
@@ -467,11 +462,15 @@ command_new(descr_t *d, char *input, size_t len)
 		cmd.argc ++;
 	}
 
+	*p = '\0';
+
 	for (int i = cmd.argc;
 	     i < sizeof(cmd.argv) / sizeof(char *);
 	     i++)
 
 		cmd.argv[i] = "";
+
+	cmd.argv[cmd.argc] = p + 1;
 
 	command_debug(&cmd, "init");
 	return cmd;
@@ -526,7 +525,7 @@ commands_init() {
 		noise_t h = uhash((void *) name, strlen(name), 88);
 		int idx = h & 0xff;
 		if (cmds_hashed[idx] != NULL)
-			warn("%s collides with something else\n", name);
+			warn("%s collides with %s\n", name, cmds_hashed[idx]->name);
 		cmds_hashed[idx] = &cmds[i];
 	}
 }
@@ -580,9 +579,7 @@ main(int argc, char **argv)
 {
 	register char c;
 
-	int i;
-	for (i = 0; i < FD_SETSIZE; i++)
-		memset(&descr_map[i], 0, sizeof(descr_t));
+	memset(descr_map, 0, sizeof(descr_map));
 
 	while ((c = getopt(argc, argv, "dsyvSC:")) != -1) {
 		switch (c) {
@@ -618,11 +615,11 @@ main(int argc, char **argv)
 		}
 	}
 
-	warn("INIT: TinyMUCK %s starting.", "version");
-	warn("%s PID is: %d", argv[0], getpid());
+	warn("INIT: TinyMUCK %s starting.\n", "version");
+	warn("%s PID is: %d\n", argv[0], getpid());
 
 	if (init_game() < 0) {
-		warn("Couldn't load " STD_DB "!");
+		warn("Couldn't load " STD_DB "!\n");
 		return 2;
 	}
 
@@ -658,7 +655,10 @@ int notify_nolisten_level = 0;
 int
 descr_write(descr_t *d, const char *data, size_t len)
 {
-	return write(d->fd, data, len);
+	if (d->flags & DF_WEBSOCKET)
+		return ws_write(d->fd, data, len);
+	else
+		return write(d->fd, data, len);
 
 #if 0
 	if (d->inband.output.p < d->inband.output.buf + QUEUE_MAX) {
@@ -905,14 +905,10 @@ wall(const char *msg)
 	DESCR_ITER(d) descr_inband(d, buf);
 }
 
-unsigned
-queue_size(queue_t *q) {
-	return q->p - q->buf;
-}
-
 int
 queue_read(descr_t *d, queue_t *q) {
 	int ret = read(d->fd, q->p, QUEUE_MAX - q->len);
+	/* warn("queue_read pre %d %d %p\n", ret, d->fd, (void *) d); */
 	if (ret <= 0)
 		return ret;
 
@@ -923,7 +919,7 @@ queue_read(descr_t *d, queue_t *q) {
 	q->len += ret;
 	*(q->p = q->buf + q->len) = '\0';
 	ret ++;
-	warn("queue_read %d %ld bytes %ld+%d/%d -- %s\n", d->fd, q->len, q->len - ret, ret, QUEUE_MAX, q->buf);
+	/* warn("queue_read %d %ld bytes %ld+%d/%d -- %s\n", d->fd, q->len, q->len - ret, ret, QUEUE_MAX, q->buf); */
 	return ret;
 }
 
@@ -1065,12 +1061,19 @@ announce_connect(command_t *cmd)
 }
 
 void
+do_httpget(command_t *cmd)
+{
+	descr_t *d = descrdata_by_descr(cmd->fd);
+	ws_handshake(cmd->fd, cmd->argv[cmd->argc]);
+	d->flags |= DF_WEBSOCKET;
+}
+
+void
 do_auth(command_t *cmd)
 {
 	int descr = cmd->fd;
 	char *user = cmd->argv[1];
 	char *password = cmd->argv[2];
-	warn("auth %s %sx\n", user, password);
         int created = 0;
         dbref player = connect_player(user, password);
 	descr_t *d = descrdata_by_descr(descr);
@@ -1093,17 +1096,17 @@ do_auth(command_t *cmd)
                         /* if (d->proto.ws.ip) */
                         /*         web_logout(d->fd); */
 
-                        warn("FAILED CREATE %s on fd %d", user, d->fd);
+                        warn("FAILED CREATE %s on fd %d\n", user, d->fd);
 			return;
                 }
 
-                warn("CREATED %s(%d) on fd %d",
+                warn("CREATED %s(%d) on fd %d\n",
                            NAME(player), player, d->fd);
                 created = 1;
         } else
-                warn("CONNECTED: %s(%d) on fd %d",
+                warn("CONNECTED: %s(%d) on fd %d\n",
                            NAME(player), player, d->fd);
-        d->flags = DF_CONNECTED;
+        d->flags |= DF_CONNECTED;
         d->connected_at = time(NULL);
         cmd->player = d->player = player;
         remember_player_descr(player, d->fd);
@@ -1169,8 +1172,8 @@ command_process(command_t *cmd)
 	dbref player = cmd->player;
 	int descr = cmd->fd;
 
-	command_debug(cmd, "command_process");
-	warn("command_process %s", command);
+	/* command_debug(cmd, "command_process"); */
+	/* warn("command_process %s\n", command); */
 
 	/* robustify player */
 	if (player >= 0 && (player >= db_top ||
@@ -1250,7 +1253,7 @@ out:
 static inline void
 descr_process(descr_t *d, char *input, size_t input_len)
 {
-	warn("descr_process %d\n", d->fd);
+	/* warn("descr_process %d\n", d->fd); */
 
 	command_t cmd = command_new(d, input, input_len);
 
@@ -1267,63 +1270,34 @@ queue_init(queue_t *q)
 	q->len = 0;
 }
 
-static inline int
-descr_read(descr_t *d)
-{
-	queue_t *q = &d->inband.input;
-	queue_init(q);
-	switch (queue_read(d, q)) {
-	case -1:
-		if (errno == EAGAIN)
-			return 0;
-
-		perror("descr_read");
-		return -1;
-	case 0:
-		return 0;
-	}
-
-	descr_process(d, q->buf, q->len);
-	return q->len;
-	/* return queue_read(d, &d->inband.input); */
-}
-
-static inline descr_t *
-descr_next()
-{
-	return &descr_map[nextfd++];
-}
-
 static inline descr_t *
 descr_new()
 {
-	descr_t *d = descr_next();
-
-	if (!d)
-		return NULL;
-
-	nextfd++;
-	memset(d, 0, sizeof(descr_t));
-
+	descr_t *d;
 	struct sockaddr_in addr;
 	socklen_t addr_len;
 
 	addr_len = (socklen_t)sizeof(addr);
-	d->fd = accept(sockfd, (struct sockaddr *) &addr, &addr_len);
+	nextfd = accept(sockfd, (struct sockaddr *) &addr, &addr_len);
 
-	warn("accept %d\n", d->fd);
+	/* warn("accept %d\n", nextfd); */
 
 	/* FIXME */
-	if (d->fd <= 0) {
+	if (nextfd <= 0) {
 		perror("descr_new");
 		return NULL;
 	}
 
-	FD_SET(d->fd, &readfds_new);
+	d = &descr_map[nextfd];
+	memset(d, 0, sizeof(descr_t));
 
-	d->flags = 0;
+	d->fd = nextfd;
+	nextfd++;
+
+
+	FD_SET(d->fd, &activefds);
+
 	d->player = -1;
-	d->con_number = 0;
 	d->connected_at = time(NULL);
 
 	if (fcntl(d->fd, F_SETFL, O_NONBLOCK) == -1) {
@@ -1372,19 +1346,23 @@ announce_disconnect(descr_t *d)
 	DBDIRTY(player);
 }
 
-static inline void
+int
 descr_close(descr_t *d)
 {
+	if (d->fd == nextfd - 1)
+		nextfd--;
+
 	if (d->flags & DF_CONNECTED) {
 		warn("%d disconnects", d->fd);
 		announce_disconnect(d);
 	} else
 		warn("%d never connected", d->fd);
 
+	FD_CLR(d->fd, &activefds);
 	shutdown(d->fd, 2);
-	close(d->fd);
-	if (d)
-		memset(d, 0, sizeof(descr_t));
+	int ret = close(d->fd);
+	memset(d, 0, sizeof(descr_t));
+	return ret;
 }
 
 static inline int
@@ -1431,10 +1409,45 @@ make_socket(int port)
 		return -1;
 	}
 
-	FD_SET(fd, &readfds_new);
+	FD_SET(fd, &activefds);
 
 	listen(fd, 5);
 	return fd;
+}
+
+static inline int
+descr_read(descr_t *d)
+{
+
+	if (d->flags & DF_WEBSOCKET) {
+		char buf[BUFSIZ];
+		ssize_t len = ws_read(d->fd, buf, sizeof(buf));
+		switch (len) {
+		case -1:
+			if (errno == EAGAIN)
+				return 0;
+
+			perror("descr_read ws ");
+		case 0: return -1;
+		}
+		descr_process(d, buf, len);
+		/* warn("ws_read %lld\n", len); */
+		return len;
+	} else {
+		queue_t *q = &d->inband.input;
+		queue_init(q);
+		switch (queue_read(d, q)) {
+		case -1:
+			if (errno == EAGAIN)
+				return 0;
+
+			perror("descr_read");
+			return -1;
+		case 0: return -1;
+		}
+		descr_process(d, q->buf, q->len);
+		return q->len;
+	}
 }
 
 int
@@ -1443,8 +1456,9 @@ shovechars()
 	time_t now;
 	struct timeval timeout;
 	descr_t *d;
-	int avail_descriptors;
+	int avail_descriptors, i;
 
+	FD_ZERO(&activefds);
 	FD_ZERO(&readfds);
 	FD_ZERO(&writefds);
 
@@ -1455,10 +1469,10 @@ shovechars()
 		return sockfd;
 	}
 
-	descr_map[0].fd = sockfd;
+	descr_map[sockfd].fd = sockfd;
 
 	nextfd = sockfd + 1;
-	warn("shovechars %d\n", sockfd);
+	/* warn("shovechars %d\n", sockfd); */
 
 	avail_descriptors = sysconf(_SC_OPEN_MAX) - 5;
 
@@ -1496,7 +1510,7 @@ shovechars()
 		timeout.tv_sec = 1;
 		timeout.tv_usec = 0;
 
-		readfds = readfds_new;
+		readfds = activefds;
 		int select_n = select(FD_SETSIZE, &readfds, NULL, NULL, &timeout);
 
 		switch (select_n) {
@@ -1514,18 +1528,19 @@ shovechars()
 			continue;
 		}
 
-		warn("select_n %d\n", select_n);
+		/* warn("select_n %d\n", select_n); */
 
-		for (d = descr_map;
+		/* TODO iterate using minfd */
+		for (d = descr_map, i = 0;
 		     d < descr_map + FD_SETSIZE;
-		     d++) {
-			if (!FD_ISSET(d->fd, &readfds))
+		     d++, i++) {
+			if (!FD_ISSET(i, &readfds))
 				continue;
 
-			if (d->fd == sockfd)
+			if (i == sockfd)
 				descr_new();
-			else 
-				descr_read(d);
+			else if (descr_read(d) < 0)
+				descr_close(d);
 		}
 	}
 

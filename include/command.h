@@ -6,7 +6,7 @@ typedef int ref_t;
 typedef struct {
 	ref_t player;
 	int fd, argc;
-	char *argv[8];
+	char *argv[8], *lines;
 	/* unsigned char direction; /1* enum exit bitmask *1/ */
 } command_t; /* FIXME commandi_t */
 
