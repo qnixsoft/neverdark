@@ -204,12 +204,8 @@ kill_target(dbref attacker, dbref target)
 		command_t cmd_new = command_new_null(tar->descr, target);
 		moveto(target, PLAYER_HOME(target));
 		geo_clean(&cmd_new, loc);
-		tar->klock = 0;
 		/* TODO do_view(tar->descr, target); */
 	} else {
-		if (tar->target && GETAGGRO(target))
-			tar->target->klock --;
-
 		if (GETTMP(getloc(target))) {
 			command_t cmd_att = command_new_null(att->descr, attacker);
 			int descr = 0;
@@ -356,7 +352,7 @@ do_status(command_t *cmd)
 		   MOBI_EV(liv, DODGE), liv->combo, liv->debuf_mask,
 		   MOBI_EV(liv, DMG), MOBI_EV(liv, MDMG), MOBI_EM(liv, MDMG),
 		   MOBI_EV(liv, DEF), MOBI_EV(liv, MDEF), MOBI_EM(liv, MDEF),
-		   liv->klock, liv->hunger, liv->thirst);
+		   mobi_klock(liv), liv->hunger, liv->thirst);
 }
 
 void

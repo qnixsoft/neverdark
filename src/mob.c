@@ -415,29 +415,27 @@ mob_obj_random()
 	return &MOB(idx)->o;
 }
 
+static inline int
+mobi_aggro(mobi_t *from, mobi_t *to)
+{
+	return GETAGGRO(from->who);
+}
+
 void
 mobs_aggro(command_t *cmd)
 {
 	dbref player = cmd->player;
-        mobi_t *me;
+        mobi_t *me = mobi_get(player);
 	dbref tmp;
-	int klock = 0;
 
-        CBUG(GETLID(player) < 0);
-        me = MOBI(player);
-        if (me->who != player)
-                me = mob_put(player);
+        CBUG(!me);
 
 	DOLIST(tmp, DBFETCH(getloc(player))->contents) {
-		int lid = GETLID(tmp);
-		if (lid >= 0 && GETAGGRO(tmp)) {
-			mobi_t *liv = MOBI(tmp);
-			liv->target = me;
-			klock++;
-		}
-	}
+		mobi_t *them = mobi_get(tmp);
 
-	me->klock += klock;
+		if (them && mobi_aggro(them, me))
+			them->target = me;
+	}
 }
 
 void
@@ -578,4 +576,35 @@ mob_update()
 		else if (n < mobi_cur)
 			mobi_cur = n;
 	}
+}
+
+/* FIXME make this inline static */
+mobi_t *
+mobi_get(ref_t who) {
+	register int lid = GETLID(who);
+
+	if (lid < 0)
+		return NULL;
+
+	return &mobi_map[lid];
+}
+
+int
+mobi_klock(mobi_t *me) {
+	dbref tmp;
+
+	DOLIST(tmp, DBFETCH(getloc(me->who))->contents) {
+		int lid = GETLID(tmp);
+
+		if (lid < 0)
+			continue;
+
+
+		mobi_t *mobi = MOBI(tmp);
+
+		if (mobi->target == me)
+			return 1;
+	}
+
+	return 0;
 }

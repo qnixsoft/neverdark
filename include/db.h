@@ -408,10 +408,6 @@ typedef long object_flag_type;
                    (((FLAGS(x) & MUCKER)? 2:0) + ((FLAGS(x) & SMUCKER)? 1:0) + 1) : \
                     ((FLAGS(x) & ABODE)? 0 : 1))
 
-#define PREEMPT 0
-#define FOREGROUND 1
-#define BACKGROUND 2
-
 #define Mucker(x) (MLevel(x) != 0)
 
 #define Builder(x) ((FLAGS(x) & (WIZARD|BUILDER)) != 0)

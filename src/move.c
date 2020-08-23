@@ -607,6 +607,13 @@ go_move(command_t *cmd, const char *direction, int lev)
 {
 	dbref player = cmd->player;
 	dbref loc;
+	int lid = GETLID(player);
+	/* CBUG(lid <= 0); */
+
+	if (mobi_klock(MOBI(lid))) {
+		notify(player, "You can't do that right now.");
+		return;
+	}
 
 #if ALLOW_HOME
 	if (!strcmp(direction, "home")) {

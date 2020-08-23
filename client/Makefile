@@ -1,4 +1,4 @@
-include /usr/local/mk/wasm.mk
+include ${METAL_PATH}/mk/wasm.mk
 # LDLIBS = ${PROG_LDLIBS}
 obj-y := view.o tty.o mcp.o main.o
 CFLAGS += -DCLIENT

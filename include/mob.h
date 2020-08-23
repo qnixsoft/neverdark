@@ -112,7 +112,7 @@ typedef struct mobi {
 	int descr;
 	unsigned respawn_in, flags; // TODO merge these two
 	unsigned short hp, mp, hunger, thirst;
-	unsigned char debuf_mask, combo, select, klock;
+	unsigned char debuf_mask, combo, select;
 } mobi_t;
 
 void mob_save(void);
@@ -124,5 +124,8 @@ struct obj const *mob_obj_random();
 void mob_update(void);
 
 extern mobi_t mobi_map[];
+
+mobi_t * mobi_get(ref_t who);
+int mobi_klock(mobi_t *me);
 
 #endif

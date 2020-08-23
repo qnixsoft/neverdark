@@ -76,14 +76,8 @@
 /* various times */
 #define AGING_TIME TIME_DAY(90)	/* Unused time before obj shows as old. */
 #define DUMP_INTERVAL TIME_HOUR(4)	/* time between dumps (or deltas) */
-#define DUMP_WARNTIME TIME_MINUTE(2)	/* warning time before a dump */
-#define MONOLITHIC_INTERVAL TIME_DAY(1)	/* max time between full dumps */
 #define CLEAN_INTERVAL TIME_MINUTE(15)	/* time between unused obj purges */
 
-
-/* Information needed for SSL */
-#define SSL_KEYFILE_PASSWD ""
-#define STARTTLS_ALLOW 0
 
 /* amount of object endowment, based on cost */
 #define MAX_OBJECT_ENDOWMENT 100
@@ -105,47 +99,6 @@
 #define PENNY_RATE 0			/* 1/chance of getting a penny per room */
 #define START_PENNIES 50		/* # of pennies a player's created with */
 
-#define MAX_DELTA_OBJS 20		/* max %age of objs changed before a full dump */
-
-/* player spam input limiters */
-#define COMMAND_BURST_SIZE 500	/* commands allowed per user in a burst */
-#define COMMANDS_PER_TIME 2		/* commands per time slice after burst  */
-#define COMMAND_TIME_MSEC 1000	/* time slice length in milliseconds    */
-
-
-/* Max %of db in unchanged objects allowed to be loaded.  Generally 5% */
-/* This is only needed if you defined DISKBASED in config.h */
-#define MAX_LOADED_OBJS 5
-
-/* Max # of timequeue events allowed. */
-#define MAX_PROCESS_LIMIT 400
-
-/* Max # of timequeue events allowed for any one player. */
-#define MAX_PLYR_PROCESSES 32
-
-/* Max # of instrs in uninterruptable muf programs before timeout. */
-#define MAX_INSTR_COUNT 20000
-
-/* Max # of instrs in uninterruptable muf programs before timeout at ML4. */
-#define MAX_ML4_PREEMPT_COUNT 0
-
-/* INSTR_SLICE is the number of instructions to run before forcing a
- * context switch to the next waiting muf program.  This is for the
- * multitasking interpreter.
- */
-#define INSTR_SLICE 2000
-
-
-/* Max # of instrs in uninterruptable programs before timeout. */
-#define MPI_MAX_COMMANDS 2048
-
-
-/* PAUSE_MIN is the minimum time in milliseconds the server will pause
- * in select() between player input/output servicings.  Larger numbers
- * slow FOREGROUND and BACKGROUND MUF programs, but reduce CPU usage.
- */
-#define PAUSE_MIN 0
-
 /* FREE_FRAMES_POOL is the number of program frames that are always
  *  available without having to allocate them.  Helps prevent memory
  *  fragmentation.
@@ -156,15 +109,6 @@
 
 /* Server support of @doing (reads the _/do prop on WHOs) */
 #define WHO_DOING 1
-
-/* To enable logging of all commands */
-#define LOG_COMMANDS 1
-
-/* To enable logging of commands while in the read or interactive mode */
-#define LOG_INTERACTIVE 1
-
-/* Log failed commands ( HUH'S ) to status log */
-#define LOG_FAILED_COMMANDS 0
 
 /* run an m3 exit with the commandline being the parameter on HUH */
 #define M3_HUH 0
@@ -178,9 +122,6 @@
 /* Makes all items under the environment of a room set Wizard, be controlled
  * by the owner of that room, as well as by the object owner, and Wizards. */
 #define REALMS_CONTROL 0
-
-/* Forbid MCP and MCP-GUI calls at less than given mucker level. 4 = wiz */
-#define MCP_MUF_MLEV 3
 
 /* Allows 'listeners' (see CHANGES file) */
 #define LISTENERS 0
@@ -255,18 +196,8 @@
 /* to re-set the Levels of all the LOOK, DISCONNECT, and CONNECT actions. */
 #define COMPATIBLE_PRIORITIES 1
 
-/* With this defined to 1, Messages and Omessages run thru the MPI parser. */
-/* This means that whatever imbedded MPI commands are in the strings get */
-/* interpreted and evaluated.  MPI commands are sort of like MUSH functions, */
-/* only possibly more bizzarre. The users will probably love it. */
-#define DO_MPI_PARSING 1
-
 /* Only allow killing people with the Kill_OK bit. */
 #define RESTRICT_KILL 1
-
-/* To have a private MUCK, this restricts player
- * creation to Wizards using the @pcreate command */
-#define REGISTRATION 0
 
 /* Define to 1 to allow _look/ propqueue hooks. */
 #define LOOK_PROPQUEUES 0

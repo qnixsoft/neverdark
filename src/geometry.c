@@ -197,14 +197,10 @@ void
 e_exit_dest_set(dbref exit, dbref dest)
 {
 	union specific *sp = &DBFETCH(exit)->sp;
-#ifdef PRECOVERY
 	if (!sp->exit.ndest) {
 		sp->exit.dest = (dbref *)malloc(sizeof(dbref));
 		sp->exit.ndest = 1;
 	}
-#else
-	CBUG(!sp->exit.ndest);
-#endif
 	sp->exit.dest[0] = dest;
 }
 

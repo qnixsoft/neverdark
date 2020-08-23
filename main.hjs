@@ -1,12 +1,16 @@
 #define METAL_IMPORT "metal"
-#define METAL_NAME "mcp"
+#define METAL_NAME "prog"
+
 #include "./client/client.js"
 
 #define CONFIG_PROTO "ws"
 
 var ws = new WebSocket(CONFIG_PROTO + "://" + window.location.hostname + ':4201', 'text');
 
-mcp.mcp_init();
+console.log("metal", metal, "prog", prog);
+metal.start_kernel();
+//console.log("start!", prog._start());
+// mcp.mcp_init();
 
 var target = null;
 
@@ -110,94 +114,8 @@ function dir_init(mask) {
                         = (mask & 1 << i) ? 1 : nop_opacity;
 }
 
-function mcp_handler(j) {
-	// console.log('mcp_handler', j);
-        if (j.key == 'inband')
-                output(j.data);
-        if (j.key == "com-qnixsoft-web-auth-error")
-                forget();
-        else if (j.key == "com-qnixsoft-web-view") {
-		var b64 = j.data;
-		// TODO improve strin or make specific mapping
-		// env.strin(mcp.memory, mcp.view_input(), b64, mcp.view_buf_l);
-		// mcp.view_build();
-                map.innerHTML = j.data;
-	} else if (j.key == "com-qnixsoft-web-art")
-                output('<img class="ah" src="' + j.src + '">');
-        else if (j.key == "com-qnixsoft-web-look-content") {
-                actionable[j.name] = j;
-                var className = "";
-                var str = j.icon;
-                var idx = str.indexOf("\"");
-
-                if (idx >= 0) {
-                        str = str.substr(idx + 1);
-                        idx = str.indexOf("\"");
-                        if (idx >= 0) {
-                                className = str.substr(0, idx);
-                                idx = str.indexOf(">");
-                                if (idx >= 0) {
-                                        str = str.substr(idx + 1, str.indexOf("<") - idx - 1);
-                                }
-                        }
-                }
-
-                var a = document.createElement("a");
-                a.onclick = actions_init.bind(null, j.name);
-                var icon = document.createElement("span");
-                icon.innerHTML = str;
-                icon.className = className;
-                a.appendChild(icon);
-                a.innerHTML += " " + j.pname;
-                contents_btns.appendChild(a);
-        } else if (j.key == "com-qnixsoft-web-look") {
-                if (j.room) {
-                        rtitle.innerHTML = j.name;
-                        rdesc.innerHTML = j.description;
-                        contents_btns.innerHTML = '';
-                        dir_init(j.exits);
-                        actionable = {};
-                }
-        } else if (j.key == "com-qnixsoft-web-meme") {
-                var a = document.createElement("a");
-                output("\n" + j.who + " says:\n");
-                a.href = j.url;
-                var img = document.createElement("img");
-                img.src = j.url;
-                img.alt = j.url;
-                img.onload = scroll_reset;
-                a.appendChild(img);
-                term.appendChild(a);
-                output("\n");
-        }
-}
-
 ws.onmessage = function (e) {
         console.log("inserted", e.data);
-        env.strin(mcp.memory, mcp.mcp_input(), e.data, 4096);
-        var ptr = mcp.mcp_proc();
-
-	if (!ptr) {
-                console.log('waiting');
-		return;
-	}
-
-	var str = env.strout(mcp.memory, ptr, 8282);
-	var jsons = null;
-
-	try {
-		jsons = JSON.parse(str);
-		console.log("output", str);
-	} catch (e) {
-		console.log(str);
-		console.error(e);
-	}
-
-	if (jsons)
-		for (var i = 0; i < jsons.length; i++)
-			mcp_handler(jsons[i]);
-
-	mcp.mcp_reset();
 };
 
 var cmd_str = "";

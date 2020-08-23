@@ -1165,7 +1165,6 @@ checkflags(dbref what, struct flgchkdat check)
 	return (1);
 }
 
-
 void
 display_objinfo(dbref player, dbref obj, int output_type)
 {

@@ -371,7 +371,7 @@ can_doit(command_t *cmd, dbref thing, const char *default_fail_msg)
 		return 0;
 	}
 
-	if (MOBI(player)->klock) {
+	if (mobi_klock(mobi_get(player))) {
 		notify(player, "You can not do that right now.");
 		return 0;
 	}

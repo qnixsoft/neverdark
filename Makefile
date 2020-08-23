@@ -4,7 +4,9 @@ srcdir := ${PWD}
 subdirs := src/ vss/ game/data/ client/
 
 include scripts/Makefile.common
-include /usr/local/mk/hjs.mk
+
+METAL_PATH ?= /usr/local/metal
+include ${METAL_PATH}/mk/hjs.mk
 
 all: index.html main.js vim.css
 

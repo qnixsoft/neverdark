@@ -93,10 +93,6 @@ db_read_header( FILE *f, const char **version, int *load_format, dbref *grow, in
 	/* this routine can deal with - just return */	
 	c = getc( f );
 	ungetc( c, f );
-	if ( c != '*' ) {
-		result |= DB_ID_OLDCOMPRESS; /* could be? */
-		return result;
-	}
 	
 	/* read the first line to id it */
 	special = getstring_noalloc( f );
@@ -106,67 +102,8 @@ db_read_header( FILE *f, const char **version, int *load_format, dbref *grow, in
 	result |= DB_ID_VERSIONSTRING;
 	*version = special;
 
-	if (!strcmp(special, "***TinyMUCK DUMP Format***")) {
-		*load_format = 1;
-		result |= DB_ID_OLDCOMPRESS;
-	} else if (!strcmp(special, "***Lachesis TinyMUCK DUMP Format***") ||
-			   !strcmp(special, "***WhiteFire TinyMUCK DUMP Format***")) {
-		*load_format = 2;
-		result |= DB_ID_OLDCOMPRESS;
-	} else if (!strcmp(special, "***Mage TinyMUCK DUMP Format***")) {
-		*load_format = 3;
-		result |= DB_ID_OLDCOMPRESS;
-	} else if (!strcmp(special, "***Foxen TinyMUCK DUMP Format***")) {
-		*load_format = 4;
-		result |= DB_ID_OLDCOMPRESS;
-	} else if (!strcmp(special, "***Foxen2 TinyMUCK DUMP Format***")) {
-		*load_format = 5;
-		result |= DB_ID_OLDCOMPRESS;
-	} else if (!strcmp(special, "***Foxen3 TinyMUCK DUMP Format***")) {
-		*load_format = 6;
-		result |= DB_ID_OLDCOMPRESS;
-	} else if (!strcmp(special, "***Foxen4 TinyMUCK DUMP Format***")) {
-		*load_format = 6;
-		*grow = getref(f);
-		result |= DB_ID_GROW;
-		result |= DB_ID_OLDCOMPRESS;
-	} else if (!strcmp(special, "***Foxen5 TinyMUCK DUMP Format***")) {
-		*load_format = 7;
-		grow_and_dbflags = TRUE;
-	} else if (!strcmp(special, "***Foxen6 TinyMUCK DUMP Format***")) {
-		*load_format = 8;
-		grow_and_dbflags = TRUE;
-	} else if (!strcmp(special, "***Foxen7 TinyMUCK DUMP Format***")) {
-		*load_format = 9;
-		grow_and_dbflags = TRUE;
-	} else if (!strcmp(special, "***Foxen8 TinyMUCK DUMP Format***")) {
-		*load_format = 10;
-		grow_and_dbflags = TRUE;
-	} else if (!strcmp(special, "***Foxen9 TinyMUCK DUMP Format***")) {
-		*load_format = 11;
-		grow_and_dbflags = TRUE;
-	} else if (!strcmp(special, "****Foxen Deltas Dump Extention***")) {
-		*load_format = 4;
-		result |= DB_ID_DELTAS;
-	} else if (!strcmp(special, "****Foxen2 Deltas Dump Extention***")) {
-		*load_format = 5;
-		result |= DB_ID_DELTAS;
-	} else if (!strcmp(special, "****Foxen4 Deltas Dump Extention***")) {
-		*load_format = 6;
-		result |= DB_ID_DELTAS;
-	} else if (!strcmp(special, "****Foxen5 Deltas Dump Extention***")) {
-		*load_format = 7;
-		result |= DB_ID_DELTAS;
-	} else if (!strcmp(special, "****Foxen6 Deltas Dump Extention***")) {
-		*load_format = 8;
-		result |= DB_ID_DELTAS;
-	} else if (!strcmp(special, "****Foxen7 Deltas Dump Extention***")) {
-		*load_format = 9;
-		result |= DB_ID_DELTAS;
-	} else if (!strcmp(special, "****Foxen8 Deltas Dump Extention***")) {
-		*load_format = 10;
-		result |= DB_ID_DELTAS;
-	}
+	*load_format = 11;
+	grow_and_dbflags = TRUE;
 
 	/* All recent versions could have these */
 	if ( grow_and_dbflags ) {
@@ -176,10 +113,6 @@ db_read_header( FILE *f, const char **version, int *load_format, dbref *grow, in
 		result |= DB_ID_GROW;
 
 		dbflags = getref(f);
-
-		if (dbflags & DB_COMPRESSED) {
-			result |= DB_ID_CATCOMPRESS;
-		}
 	}
 
 	return result;

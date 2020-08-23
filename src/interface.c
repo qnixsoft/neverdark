@@ -414,8 +414,15 @@ int shutdown_flag = 0;
 static const char *create_fail =
 		"Either there is already a player with that name, or that name is illegal.\r\n";
 
-static int sockfd, nextfd;
+static int sockfd;
 descr_t descr_map[FD_SETSIZE];
+
+int shovechars();
+void close_sockets(const char *msg);
+void    remember_player_descr(dbref player, int);
+int*    get_player_descrs(dbref player, int* count);
+void    forget_player_descr(dbref player, int);
+descr_t * descrdata_by_descr(int i);
 
 void
 command_debug(command_t *cmd, char *label)
@@ -432,6 +439,83 @@ command_debug(command_t *cmd, char *label)
 	warn("\n");
 }
 
+void
+announce_puppets(dbref player, const char *msg, const char *prop)
+{
+	dbref what, where;
+	const char *ptr, *msg2;
+	char buf[BUFFER_LEN];
+
+	for (what = 0; what < db_top; what++) {
+		if (Typeof(what) == TYPE_THING && (FLAGS(what) & ZOMBIE)) {
+			if (OWNER(what) == player) {
+				where = getloc(what);
+				if ((!Dark(where)) && (!Dark(player)) && (!Dark(what))) {
+					msg2 = msg;
+					if ((ptr = (char *) get_property_class(what, prop)) && *ptr)
+						msg2 = ptr;
+					snprintf(buf, sizeof(buf), "%.512s %.3000s", NAME(what), msg2);
+					notify_except(DBFETCH(where)->contents, what, buf, what);
+				}
+			}
+		}
+	}
+}
+
+static inline void
+announce_disconnect(descr_t *d)
+{
+	command_t cmd = command_new_null(d->fd, d->player);
+	dbref player = d->player;
+	dbref loc;
+	char buf[BUFFER_LEN];
+
+	if ((loc = getloc(player)) == NOTHING)
+		return;
+
+	if ((!Dark(player)) && (!Dark(loc))) {
+		snprintf(buf, sizeof(buf), "%s has disconnected.", NAME(player));
+		notify_except(DBFETCH(loc)->contents, player, buf, player);
+	}
+
+	/* trigger local disconnect action */
+	if (PLAYER_DESCRCOUNT(player) == 1) {
+		if (can_move(&cmd, "disconnect", 1))
+			go_move(&cmd, "disconnect", 1);
+		announce_puppets(player, "falls asleep.", "_/pdcon");
+	}
+
+	d->flags = 0;
+	d->player = NOTHING;
+
+	forget_player_descr(player, d->fd);
+
+	/* queue up all _connect programs referred to by properties */
+	envpropqueue(&cmd, getloc(player), NOTHING, player, NOTHING,
+				 "_disconnect", "Disconnect", 1, 1);
+	envpropqueue(&cmd, getloc(player), NOTHING, player, NOTHING,
+				 "_odisconnect", "Odisconnect", 1, 0);
+
+	ts_lastuseobject(player);
+	DBDIRTY(player);
+}
+
+int
+descr_close(descr_t *d)
+{
+	if (d->flags & DF_CONNECTED) {
+		warn("%d disconnects\n", d->fd);
+		announce_disconnect(d);
+	} else
+		warn("%d never connected\n", d->fd);
+
+	FD_CLR(d->fd, &activefds);
+	shutdown(d->fd, 2);
+	int ret = close(d->fd);
+	memset(d, 0, sizeof(descr_t));
+	return ret;
+}
+
 static inline command_t
 command_new(descr_t *d, char *input, size_t len)
 {
@@ -443,8 +527,10 @@ command_new(descr_t *d, char *input, size_t len)
 	cmd.fd = d->fd;
 	cmd.argc = 0;
 
-	if (!*p)
+	if (!*p || !isprint(*p)) {
+		descr_close(d);
 		return cmd;
+	}
 
 	cmd.argv[0] = p;
 	cmd.argc++;
@@ -452,6 +538,12 @@ command_new(descr_t *d, char *input, size_t len)
 	for (; p < input + len; p++) {
 		if (*p == '\r')
 			break;
+
+		if (!isprint(*p)) {
+			memset(&cmd, 0, sizeof(cmd));
+			descr_close(d);
+			return cmd;
+		}
 
 		if (*p != ' ')
 			continue;
@@ -530,13 +622,6 @@ commands_init() {
 	}
 }
 
-int shovechars();
-void close_sockets(const char *msg);
-void    remember_player_descr(dbref player, int);
-int*    get_player_descrs(dbref player, int* count);
-void    forget_player_descr(dbref player, int);
-descr_t * descrdata_by_descr(int i);
-
 short optflags = 0;
 pid_t global_dumper_pid=0;
 short global_dumpdone=0;
@@ -560,7 +645,6 @@ show_program_usage(char *prog)
 #define isinput( q ) isprint( (q) & 127 )
 
 extern int sanity_violated;
-int time_since_combat = 0;
 
 void
 close_sockets(const char *msg) {
@@ -652,30 +736,42 @@ main(int argc, char **argv)
 
 int notify_nolisten_level = 0;
 
-int
-descr_write(descr_t *d, const char *data, size_t len)
-{
-	if (d->flags & DF_WEBSOCKET)
-		return ws_write(d->fd, data, len);
-	else
-		return write(d->fd, data, len);
+/* static inline int */
+/* descr_write(descr_t *d, const char *data, size_t len) */
+/* { */
+/* 	if (d->flags & DF_WEBSOCKET) */
+/* 		return ws_write(d->fd, data, len); */
+/* 	else */
+/* 		return write(d->fd, data, len); */
 
-#if 0
-	if (d->inband.output.p < d->inband.output.buf + QUEUE_MAX) {
-		memcpy(d->inband.output.p, data, len);
-		d->inband.output.len += len;
-		return len;
-	}
+/* #if 0 */
+/* 	if (d->inband.output.p < d->inband.output.buf + QUEUE_MAX) { */
+/* 		memcpy(d->inband.output.p, data, len); */
+/* 		d->inband.output.len += len; */
+/* 		return len; */
+/* 	} */
 
-	return -1;
-#endif
-}
+/* 	return -1; */
+/* #endif */
+/* } */
+
+
+#include "package.h"
 
 int
 descr_inband(descr_t *d, const char *s)
 {
-	/* warn("descr_inband %d %s", d->fd, s); */
-	return descr_write(d, s, strlen(s));
+	size_t len = strlen(s);
+	/* return descr_write(d, s, strlen(s)); */
+	if (d->flags & DF_WEBSOCKET) {
+		package_t pkg;
+		pkg.head.flags = PKG_INBAND;
+		pkg.head.len = len;
+		memcpy(pkg.data, s, len);
+		return ws_write(d->fd, &pkg, sizeof(pkg_head_t) + len);
+	}
+	else
+		return write(d->fd, s, len);
 }
 
 typedef struct {
@@ -885,10 +981,6 @@ extern void purge_free_frames(void);
 static void
 do_tick()
 {
-	if (time_since_combat < 1000)
-		return;
-
-	time_since_combat = 0;
 	mob_update();
 	geo_update();
 }
@@ -931,7 +1023,7 @@ mob_welcome(descr_t *d)
 		CBUG(*o->name == '\0');
 		descr_inband(d, o->name);
 		descr_inband(d, "\r\n\r\n");
-		art(d->fd, o->art);
+		/* art(d->fd, o->art); */
                 if (*o->description) {
                         if (*o->description != '\0')
                                 descr_inband(d, o->description);
@@ -978,29 +1070,6 @@ welcome_user(descr_t *d)
 		}
 	}
 #endif
-}
-
-void
-announce_puppets(dbref player, const char *msg, const char *prop)
-{
-	dbref what, where;
-	const char *ptr, *msg2;
-	char buf[BUFFER_LEN];
-
-	for (what = 0; what < db_top; what++) {
-		if (Typeof(what) == TYPE_THING && (FLAGS(what) & ZOMBIE)) {
-			if (OWNER(what) == player) {
-				where = getloc(what);
-				if ((!Dark(where)) && (!Dark(player)) && (!Dark(what))) {
-					msg2 = msg;
-					if ((ptr = (char *) get_property_class(what, prop)) && *ptr)
-						msg2 = ptr;
-					snprintf(buf, sizeof(buf), "%.512s %.3000s", NAME(what), msg2);
-					notify_except(DBFETCH(where)->contents, what, buf, what);
-				}
-			}
-		}
-	}
 }
 
 void
@@ -1112,7 +1181,7 @@ do_auth(command_t *cmd)
         remember_player_descr(player, d->fd);
         /* cks: someone has to initialize this somewhere. */
         /* PLAYER_SET_BLOCK(d->player, 0); */
-        welcome_user(d);
+        /* welcome_user(d); */
         spit_file(player, MOTD_FILE);
         announce_connect(cmd);
         if (created) {
@@ -1276,23 +1345,23 @@ descr_new()
 	descr_t *d;
 	struct sockaddr_in addr;
 	socklen_t addr_len;
+	int fd;
 
 	addr_len = (socklen_t)sizeof(addr);
-	nextfd = accept(sockfd, (struct sockaddr *) &addr, &addr_len);
+	fd = accept(sockfd, (struct sockaddr *) &addr, &addr_len);
 
-	/* warn("accept %d\n", nextfd); */
+	warn("descr_new %d %s\n", fd, inet_ntoa(addr.sin_addr));
 
 	/* FIXME */
-	if (nextfd <= 0) {
+	if (fd <= 0) {
 		perror("descr_new");
 		return NULL;
 	}
 
-	d = &descr_map[nextfd];
+	d = &descr_map[fd];
 	memset(d, 0, sizeof(descr_t));
 
-	d->fd = nextfd;
-	nextfd++;
+	d->fd = fd;
 
 
 	FD_SET(d->fd, &activefds);
@@ -1306,63 +1375,6 @@ descr_new()
 	}
 
 	return d;
-}
-
-static inline void
-announce_disconnect(descr_t *d)
-{
-	command_t cmd = command_new_null(d->fd, d->player);
-	dbref player = d->player;
-	dbref loc;
-	char buf[BUFFER_LEN];
-
-	if ((loc = getloc(player)) == NOTHING)
-		return;
-
-	if ((!Dark(player)) && (!Dark(loc))) {
-		snprintf(buf, sizeof(buf), "%s has disconnected.", NAME(player));
-		notify_except(DBFETCH(loc)->contents, player, buf, player);
-	}
-
-	/* trigger local disconnect action */
-	if (PLAYER_DESCRCOUNT(player) == 1) {
-		if (can_move(&cmd, "disconnect", 1))
-			go_move(&cmd, "disconnect", 1);
-		announce_puppets(player, "falls asleep.", "_/pdcon");
-	}
-
-	d->flags = 0;
-	d->player = NOTHING;
-
-	forget_player_descr(player, d->fd);
-
-	/* queue up all _connect programs referred to by properties */
-	envpropqueue(&cmd, getloc(player), NOTHING, player, NOTHING,
-				 "_disconnect", "Disconnect", 1, 1);
-	envpropqueue(&cmd, getloc(player), NOTHING, player, NOTHING,
-				 "_odisconnect", "Odisconnect", 1, 0);
-
-	ts_lastuseobject(player);
-	DBDIRTY(player);
-}
-
-int
-descr_close(descr_t *d)
-{
-	if (d->fd == nextfd - 1)
-		nextfd--;
-
-	if (d->flags & DF_CONNECTED) {
-		warn("%d disconnects", d->fd);
-		announce_disconnect(d);
-	} else
-		warn("%d never connected", d->fd);
-
-	FD_CLR(d->fd, &activefds);
-	shutdown(d->fd, 2);
-	int ret = close(d->fd);
-	memset(d, 0, sizeof(descr_t));
-	return ret;
 }
 
 static inline int
@@ -1471,7 +1483,6 @@ shovechars()
 
 	descr_map[sockfd].fd = sockfd;
 
-	nextfd = sockfd + 1;
 	/* warn("shovechars %d\n", sockfd); */
 
 	avail_descriptors = sysconf(_SC_OPEN_MAX) - 5;
@@ -1537,9 +1548,9 @@ shovechars()
 			if (!FD_ISSET(i, &readfds))
 				continue;
 
-			if (i == sockfd)
+			if (i == sockfd) {
 				descr_new();
-			else if (descr_read(d) < 0)
+			} else if (descr_read(d) < 0)
 				descr_close(d);
 		}
 	}
@@ -1573,7 +1584,7 @@ boot_off(dbref player)
 
 	PLAYER_DESCR_ITER(pdi, player) {
 		pdi.d->flags |= DF_BOOTED;
-		/* descr_close(last); */
+		descr_close(pdi.d);
 	}
 
 	return !pdi.dcount;

@@ -761,6 +761,10 @@ geo_v(command_t *cmd, char const *opcs)
 
 	for (;*s;) {
 		int ofs = 0;
+		if (!isprint(*s)) {
+			s++;
+			continue;
+		}
 		op_t op = op_map[(int) *s]; // the op
 		op_a_t *aop = op.type ? NULL : op.op.a; 
 		ofs += !!(aop || op.type);

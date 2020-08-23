@@ -1,5 +1,7 @@
 #include "mcp.h"
 
+#include <unistd.h>
+
 #include "metal.h"
 #include <stdio.h>
 #include <string.h>
@@ -98,144 +100,34 @@ mcp_arg() {
 	return &mcp.args[mcp.args_l];
 }
 
-static inline void
-mcp_proc_ch(char *p) {
-	if (GET_FLAG(MCP_SKIP)) {
-		if (*p != '\n')
-			return;
-		mcp.flags ^= MCP_SKIP;
-		mcp.state = 1;
-		return;
+#include "package.h"
+
+int wsfd;
+
+/* extern void output(char *); */
+
+static inline int
+pkg_handle(char *buf) {
+	pkg_head_t head;
+	read(wsfd, &head, sizeof(head));
+	switch (head.flags) {
+	case PKG_INBAND: {
+		char raw[BUFSIZ];
+		char tty[2 * BUFSIZ];
+		read(wsfd, raw, head.len);
+		tty_proc(tty, raw);
+		/* output(tty); */
 	}
-
-	switch (*p) {
-	case '#':
-		switch (mcp.state) {
-		case 3:
-		case 1:
-			mcp.state++;
-			return;
-		}
-		break;
-	case '$':
-		if (mcp.state == 2) {
-			mcp.state++;
-			return;
-		}
-		break;
-	case '*':
-		if (mcp.state == MCP_CONFIRMED) {
-			// only assert MULTI
-			mcp.flags = MCP_MULTI | MCP_NOECHO;
-			mcp.state = 0;
-			return;
-		}
-
-		if (!GET_FLAG(MCP_ON) || !GET_FLAG(MCP_KEY))
-			break;
-
-		SET_FLAGS(MCP_MULTI | MCP_SKIP);
-		mcp_set(mcp_arg()->key);
-		return;
-
-	case ':':
-		if (GET_FLAG(MCP_MULTI)) {
-			if (mcp.state == MCP_CONFIRMED) {
-				mcp.state = 0;
-				mcp_set(mcp_arg()->value);
-				mcp.args_l ++;
-				mcp_emit();
-				mcp.flags = MCP_SKIP;
-			} else
-				mcp.flags &= ~MCP_NOECHO;
-			return;
-		} else if (GET_FLAG(MCP_KEY)) {
-			mcp_set(mcp_arg()->key);
-			return;
-		}
-		break;
-
-	case '"':
-		if (!GET_FLAG(MCP_ON))
-			break;
-
-		mcp.flags ^= MCP_KEY;
-		if (GET_FLAG(MCP_KEY)) {
-			mcp_set(mcp_arg()->value);
-			mcp.args_l++;
-		}
-		return;
-
-	case ' ':
-		if (!GET_FLAG(MCP_ON))
-			break;
-
-		else if (GET_FLAG(MCP_NAME)) {
-			mcp.flags ^= MCP_NAME | MCP_HASH | MCP_NOECHO;
-			mcp_set(mcp.name);
-			if (*mcp.name)
-				mcp.args_l = 0;
-			else
-				mcp.flags = MCP_SKIP;
-			return;
-
-		} else if (GET_FLAG(MCP_HASH)) {
-			mcp.flags ^= MCP_HASH | MCP_KEY | MCP_NOECHO;
-			return;
-		} else if (GET_FLAG(MCP_KEY))
-			return;
-		break;
-	case '\n':
-		mcp.state = 1;
-		if (GET_FLAG(MCP_MULTI))
-			*mcp.cache_p++ = '\n';
-		return;
 	}
-
-	if (mcp.state == MCP_CONFIRMED) {
-		// new mcp
-		if (mcp.name[0])
-			mcp_emit();
-		else if (GET_FLAG(MCP_INBAND))
-			inband_emit();
-		mcp.flags = MCP_ON | MCP_NAME;
-		mcp.state = 0;
-	} else if (mcp.state) {
-		// mcp turned out impossible
-		if (GET_FLAG(MCP_ON))
-			mcp_emit();
-
-		if (!GET_FLAG(MCP_MULTI))
-			mcp.flags = MCP_INBAND;
-
-		strncpy(mcp.cache_p, "\n#$#", mcp.state);
-		mcp.cache_p += mcp.state;
-		mcp.state = 0;
-	}
-
-	if (!GET_FLAG(MCP_NOECHO))
-		*mcp.cache_p++ = *p;
+	return 0;
 }
 
 export char *
 mcp_proc() {
 	char *in;
 
-        for (in = in_buf; *in != '\0'; in++)
-		mcp_proc_ch(in);
-
-	if (GET_FLAG(MCP_MULTI))
-		;
-	else if (GET_FLAG(MCP_ON))
-		mcp_emit();
-	else if (GET_FLAG(MCP_INBAND))
-		inband_emit();
-
-	if (last_p != out_buf) {
-		*last_p++ = ']';
-		*last_p++ = '\0';
-		return out_buf;
-	}
+        for (in = in_buf; in;)
+		in = pkg_handle(in);
 
 	return NULL;
 }
