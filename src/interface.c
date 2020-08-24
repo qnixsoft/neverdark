@@ -1194,9 +1194,8 @@ do_auth(command_t *cmd)
                                "## WARNING!  The DB appears to be corrupt!  Please repair immediately! ##\n"
                                "#########################################################################");
         }
-        /* if (!(web_support(d->fd) && d->proto.ws.old)) */
+
 	do_view(cmd);
-        look_room(cmd, getloc(player), 0);
 
 	return;
 }

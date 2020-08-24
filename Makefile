@@ -3,12 +3,17 @@
 srcdir := ${PWD}
 subdirs := src/ vss/ game/data/ client/
 
+CONFIG_WEB=
+
 include scripts/Makefile.common
 
 METAL_PATH ?= /usr/local/metal
 include ${METAL_PATH}/mk/hjs.mk
 
-all: index.html main.js vim.css
+target-web-y := index.html main.js vim.css
+all: ${target-web-${CONFIG_WEB}}
+
+# web config related stuff {{{
 
 main.js: client/
 
@@ -23,9 +28,6 @@ $(subdirs-cleaner):
 	${MAKE} -C ${@:%-cleaner=%} cleaner
 cleaner: ${subdirs-cleaner}
 	rm config.status config.cache config.log
-
-web: src
-	${srcdir}/src/ws-server
 
 game/data/: ${subdirs}
 
@@ -51,12 +53,14 @@ art-install := ${art-y:%=${datadir}/%}
 $(art-install):
 	install -m 644 ${@:${datadir}/%=%} $@
 
-install: ${artdir} ${art-install}
+install: ${artdir} ${art-install} ${install-web-${CONFIG_WEB}}
 	${INSTALL_SCRIPT} ${srcdir}/src/fbmuck ${PREFIX}/bin/neverdark
+	${INSTALL_SCRIPT} ${srcdir}/src/fbmuck ${PREFIX}/bin/neverdark
+
+install-web-y:
 	${INSTALL_DATA} index.html ${datadir}/
 	${INSTALL_DATA} vim.css ${datadir}/
 	${INSTALL_DATA} styles.css ${datadir}/
-	${INSTALL_SCRIPT} ${srcdir}/src/fbmuck ${PREFIX}/bin/neverdark
 
 .PHONY: cleaner ${subdirs-cleaner} web \
 	${mt-phony-${mt}} backup
