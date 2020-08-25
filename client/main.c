@@ -122,7 +122,6 @@ main(int argc, char *argv[], char *envp[])
 	glutInit(&argc, argv);
 
 	glEnable(GL_DEPTH_TEST); 
-	glDisable(GL_LIGHTING);
 
 	n = snprintf(inbuf, sizeof(inbuf), "auth %s %s", username, password);
 	write(sockfd, inbuf, n + 2); 

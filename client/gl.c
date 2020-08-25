@@ -5,14 +5,14 @@
 struct glcolor {
 	float r, g, b;
 } glCol[] = {
-	{ .0, .0, .0 },
+	{ .23, .25, .23 },
 	{ .75, .0, .0 },
-	{ .0, .75, .0 },
+	{ .23, .37, .28 },
 	{ .63, .59, .35 },
 	{ .0, .0, .75 },
 	{ .75, .0, .75 },
-	{ .0, .75, .75 },
-	{ .75, .75, .75 },
+	{ .25, .36, .37 },
+	{ .75, .76, .85 },
 
 	{ .25, .25, .25 },
 	{ 1., .0, .0 },
@@ -82,14 +82,6 @@ gl_csic_bg(struct tty *tty) {
 }
 
 void
-gl_csic_end(struct tty *tty) {
-	/* union gl_tty_item fgi = { .fg = &glCol[7] }; */
-	/* union gl_tty_item bgi = { .bg = &glCol[0] }; */
-	/* gl_tty_append(tty, GLIT_FG, fgi); */
-	/* gl_tty_append(tty, GLIT_BG, bgi); */
-}
-
-void
 gl_echo(struct tty *tty, char ch) {
 	union gl_tty_item item = { .ch = ch };
 	gl_tty_append(tty, GLIT_CHAR, item);
@@ -121,7 +113,7 @@ struct tty_driver gl_tty_driver = {
 	.csic_start = &csic_nothing,
 	.csic_fg = &gl_csic_fg,
 	.csic_bg = &gl_csic_bg,
-	.csic_end = &gl_csic_end,
+	.csic_end = &csic_nothing,
 	.csic_nil = &buf_csic_nil,
 	.flush = &gl_flush,
 	.echo = &gl_echo,
@@ -134,7 +126,7 @@ gl_tty_render(struct tty *tty) {
 		= (struct gl_tty_payload *) tty->driver.payload;
 
 	struct gl_tty_fifo *fifo = pl->first;
-	struct glcolor c = { 0., 0., 0. };
+	struct glcolor fg = glCol[7], bg = glCol[0];
 	char ch;
 	float y = .95;
 	float x = -.95;
@@ -142,18 +134,10 @@ gl_tty_render(struct tty *tty) {
 	for (fifo = pl->first; fifo; fifo = fifo->next) {
 		switch (fifo->type) {
 		case GLIT_FG:
-			c = *fifo->item.fg;
-			glColor3f(c.r, c.g, c.b);
+			fg = *fifo->item.fg;
 			break;
 		case GLIT_BG:
-			/* c = *fifo->item.bg; */
-			/* glColor3f(c.r, c.g, c.b); */
-			/* glBegin(GL_QUADS); */
-			/* glVertex3f(x - 0.1, y - 0.1, -0.1); */
-			/* glVertex3f(x + 0.1, y - 0.1, -0.1); */
-			/* glVertex3f(x + 0.1, y + 0.1, -0.1); */
-			/* glVertex3f(x - 0.1, y + 0.1, -0.1); */
-			/* glEnd(); */
+			bg = *fifo->item.bg;
 			break;
 		case GLIT_CHAR:
 			ch = fifo->item.ch;
@@ -164,9 +148,19 @@ gl_tty_render(struct tty *tty) {
 				glRasterPos3f(-.95, y, 0.);
 				break;
 			default:
+				glColor3f(bg.r, bg.g, bg.b);
+				glBegin(GL_QUADS);
+				glVertex3f(x + 0.016, y - 0.008, -0.1);
+				glVertex3f(x + 0.036, y - 0.008, -0.1);
+				glVertex3f(x + 0.036, y + 0.022, -0.1);
+				glVertex3f(x + 0.016, y + 0.022, -0.1);
+				glEnd();
+				glColor3f(fg.r, fg.g, fg.b);
+
 				x += .02;
 				glRasterPos3f(x, y, 0.);
 				glutBitmapCharacter(GLUT_BITMAP_8_BY_13, ch);
+
 			}
 			continue;
 		}
