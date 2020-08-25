@@ -3,85 +3,6 @@
 #include <stdio.h>
 #include <ctype.h>
 
-struct attr {
-        int fg, bg, x;
-};
-
-struct tty;
-
-typedef ssize_t tty_csi_change_cb(struct tty *, char *out);
-typedef void tty_csi_nil_cb(struct tty *);
-
-struct tty {
-	int flags;
-        int esc_state, csi_changed;
-        struct attr c_attr, csi;
-	tty_csi_change_cb *csic_pre, *csic_start,
-			  *csic_fg, *csic_bg, *csic_end;
-	tty_csi_nil_cb *csic_nil;
-	char *end_tag;
-};
-
-ssize_t
-web_csic_pre(struct tty *tty, char *out) {
-        return sprintf(out, "%s", tty->end_tag);
-}
-
-ssize_t
-web_csic_start(struct tty *tty, char *out) {
-	return sprintf(out, "<span class=\\\"");
-}
-
-ssize_t
-web_csic_fg(struct tty *tty, char *out) {
-	return sprintf(out, "cf%d", tty->csi.fg);
-}
-
-ssize_t
-web_csic_bg(struct tty *tty, char *out) {
-	return sprintf(out, " c%d", tty->csi.bg);
-}
-
-ssize_t
-web_csic_end(struct tty *tty, char *out) {
-	ssize_t ret = sprintf(out, "\\\">");
-	tty->end_tag = "</span>";
-	return ret;
-}
-
-void
-web_csic_nil(struct tty *tty) {
-	tty->end_tag = "";
-}
-
-ssize_t
-tee_csic_nothing(struct tty *tty, char *out) {
-	return 0;
-}
-
-ssize_t
-tee_csic_fg(struct tty *tty, char *out) {
-	char *fout = out;
-	int fg = tty->csi.fg;
-	if (fg >= 8) {
-		out += sprintf(out, "\x1b[1m");
-		fg -= 8;
-	}
-	out += sprintf(out, "\x1b[%dm", fg + 30);
-	return out - fout;
-}
-
-ssize_t
-tee_csic_bg(struct tty *tty, char *out) {
-	return sprintf(out, "\x1b[%dm", tty->csi.bg + 40);
-}
-
-ssize_t
-tee_csic_end(struct tty *tty, char *out) {
-	tty->end_tag = "\x1b[0m";
-	return 0;
-}
-
 static inline void
 params_push(struct tty *tty, int x)
 {
@@ -102,44 +23,32 @@ params_push(struct tty *tty, int x)
 	tty->csi.x = x;
 }
 
-static inline size_t
-csi_change(char *out, struct tty *tty)
+static inline void
+csi_change(struct tty *tty)
 {
-	char *fout = out;
 	int a = tty->csi.fg != 7, b = tty->csi.bg != 0;
-	out += tty->csic_pre(tty, out);
+	tty->driver.csic_pre(tty);
 
 	if (a || b) {
-		out += tty->csic_start(tty, out);
+		tty->driver.csic_start(tty);
 		if (a)
-			out += tty->csic_fg(tty, out);
+			tty->driver.csic_fg(tty);
 		if (b)
-			out += tty->csic_bg(tty, out);
+			tty->driver.csic_bg(tty);
 
-		out += tty->csic_end(tty, out);
+		tty->driver.csic_end(tty);
 	} else
-		tty->csic_nil(tty);
-
-        return out - fout;
+		tty->driver.csic_nil(tty);
 }
 
-void tty_init(struct tty *tty) {
+void tty_init(struct tty *tty, struct tty_driver driver) {
 	tty->csi.fg = tty->c_attr.fg = 7;
 	tty->csi.bg = tty->c_attr.bg = 0;
 	tty->csi.x = tty->c_attr.x = 0;
         tty->end_tag = "";
 	tty->esc_state = 0;
-	tty->csic_pre = &web_csic_pre;
-	/* tty->csic_pre = &tee_csic_nothing; */
-	/* tty->csic_start = &web_csic_start; */
-	tty->csic_start = &tee_csic_nothing;
-	/* tty->csic_fg = &web_csic_fg; */
-	tty->csic_fg = &tee_csic_fg;
-	/* tty->csic_bg = &web_csic_bg; */
-	tty->csic_bg = &tee_csic_bg;
-	/* tty->csic_end = &web_csic_end; */
-	tty->csic_end = &tee_csic_end;
-	tty->csic_nil = &web_csic_nil;
+	tty->driver = driver;
+	driver.init(tty);
 }
 
 char *escape_map[256] = {
@@ -151,50 +60,50 @@ char *escape_map[256] = {
 	[(unsigned) '/'] = "\\/",
 };
 
-static inline size_t
-esc_state_0(char *out, struct tty *tty, unsigned char ch) {
-	char *fout = out;
-
+static inline void
+esc_state_0(struct tty *tty, unsigned char ch) {
 	if (tty->csi_changed) {
-		out += csi_change(out, tty);
+		csi_change(tty);
 		tty->csi_changed = 0;
 	}
 
-	if (*escape_map[(unsigned) ch] != '\0')
-		out += sprintf(out, "%s", escape_map[(int) ch]);
-	else
-		*out++ = ch;
+	tty->driver.echo(tty, ch);
+	/* if (*escape_map[(unsigned) ch] != '\0') */
+	/* 	out += sprintf(out, "%s", escape_map[(int) ch]); */
+	/* else */
+	/* 	*out++ = ch; */
 
-	return out - fout;
+	/* return out - fout; */
 }
 
-static inline size_t
-tty_proc_ch(char *out, struct tty *tty, char *p) {
+static inline void
+tty_proc_ch(struct tty *tty, char *p) {
 	register char ch = *p;
 
 	switch (ch) {
 	case '\x18':
 	case '\x1a':
 		tty->esc_state = 0;
-		return 0;
+		return;
 	case '\x1b':
 		tty->esc_state = 1;
-		return 0;
+		return;
 	case '\x9b':
 		tty->esc_state = 2;
-		return 0;
+		return;
 	case '\x07': 
 	case '\x00':
 	case '\x7f':
 	case '\v':
 	case '\r':
 	case '\f':
-		return 0;
+		return;
 	}
 
 	switch (tty->esc_state) {
 	case 0:
-		return esc_state_0(out, tty, ch);
+		esc_state_0(tty, ch);
+		return;
 	case 1:
 		switch (ch) {
 		case '[':
@@ -212,10 +121,10 @@ tty_proc_ch(char *out, struct tty *tty, char *p) {
 		case 'H':
 		case 'J':
 			tty->esc_state = 0;
-			return 0;
+			return;
 		case '?':
 			tty->esc_state = 5;
-			return 0;
+			return;
 		}
 		params_push(tty, 0);
 		tty->esc_state = 3;
@@ -254,20 +163,16 @@ tty_proc_ch(char *out, struct tty *tty, char *p) {
 	case 6: tty->esc_state = 0;
 		break;
 	}
-
-	return 0;
 }
 
-size_t
-tty_proc(char *out, char *input) {
-        struct tty tty;
-	char *in, *fout = out;
+void
+tty_proc(struct tty *tty, char *input) {
+	char *in;
 
-        tty_init(&tty);
+	tty->driver.init(tty);
         for (in = input; *in != '\0'; in++)
-		out += tty_proc_ch(out, &tty, in);
-	out += tty.csic_pre(&tty, out);
-	*out++ = '\0';
+		tty_proc_ch(tty, in);
 
-        return out - fout;
+	tty->driver.csic_pre(tty);
+	tty->driver.flush(tty);
 }

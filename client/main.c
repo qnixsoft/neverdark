@@ -25,7 +25,6 @@ Colormap cmap;
 XSetWindowAttributes swa;
 GLXContext glc;
 XWindowAttributes gwa;
-char outbuf[4 * BUFSIZ];
 
 void DrawAQuad() {
 	glClearColor(1.0, 1.0, 1.0, 1.0);
@@ -44,7 +43,7 @@ void DrawAQuad() {
 	char *c;
 	glRasterPos3f(-.75, .75, 0.);
 
-	for (c=outbuf; *c != '\0'; c++) 
+	for (c="hello world"; *c != '\0'; c++) 
 	{
 		glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_10, *c);
 	}
@@ -129,6 +128,10 @@ main(int argc, char *argv[], char *envp[])
 	n = snprintf(inbuf, sizeof(inbuf), "auth %s %s", username, password);
 	write(sockfd, inbuf, n + 2); 
 
+	struct tty tee_tty, gl_tty;
+	tty_init(&tee_tty, tee_tty_driver);
+	/* tty_init(&gl_tty, gl_tty_driver); */
+
 	for (;;) {
 		while (XPending(display)) {
 			XNextEvent(display, &ev);
@@ -161,8 +164,8 @@ main(int argc, char *argv[], char *envp[])
 			else if (ret == 0)
 				continue;
 			inbuf[ret] = '\0';
-			tty_proc(outbuf, inbuf);
-			printf("%s", outbuf);
+			tty_proc(&tee_tty, inbuf);
+			/* tty_proc(&gl_tty, inbuf); */
 		} else if (FD_ISSET(0, &rd)) {
 			char *ptr = fgets(inbuf, sizeof(inbuf), stdin);
 			if (ptr == NULL)
