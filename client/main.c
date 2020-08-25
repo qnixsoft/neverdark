@@ -11,6 +11,7 @@
 #include <GL/gl.h>
 #include <GL/glx.h>
 #include <GL/glu.h>
+#include <GL/glut.h>
 #include "tty.h"
 
 #define FIXEDSTR(a) a, (sizeof(a) + 1)
@@ -24,6 +25,7 @@ Colormap cmap;
 XSetWindowAttributes swa;
 GLXContext glc;
 XWindowAttributes gwa;
+char outbuf[4 * BUFSIZ];
 
 void DrawAQuad() {
 	glClearColor(1.0, 1.0, 1.0, 1.0);
@@ -37,12 +39,15 @@ void DrawAQuad() {
 	glLoadIdentity();
 	gluLookAt(0., 0., 10., 0., 0., 0., 0., 1., 0.);
 
-	glBegin(GL_QUADS);
-	glColor3f(1., 0., 0.); glVertex3f(-.75, -.75, 0.);
-	glColor3f(0., 1., 0.); glVertex3f( .75, -.75, 0.);
-	glColor3f(0., 0., 1.); glVertex3f( .75,  .75, 0.);
-	glColor3f(1., 1., 0.); glVertex3f(-.75,  .75, 0.);
-	glEnd();
+	glColor3f(0., 0., 0.);
+
+	char *c;
+	glRasterPos3f(-.75, .75, 0.);
+
+	for (c=outbuf; *c != '\0'; c++) 
+	{
+		glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_10, *c);
+	}
 } 
 
 int
@@ -56,7 +61,6 @@ main(int argc, char *argv[], char *envp[])
 	int sockfd, n; 
 	struct sockaddr_in servaddr; 
 	char inbuf[2 * BUFSIZ];
-	char outbuf[4 * BUFSIZ];
 	char username[64];
 	char password[64];
 	struct timeval tv;
@@ -120,13 +124,7 @@ main(int argc, char *argv[], char *envp[])
 	glXMakeCurrent(display, window, glc);
 
 	glEnable(GL_DEPTH_TEST); 
-
-	/* gc = XCreateGC(display, window, 0, 0); */   
-	/* XSetBackground(display, gc, black); */
-	/* XSetForeground(display, gc, white); */
-	/* XSetFillStyle(display, gc, FillSolid); */
-
-	/* XClearWindow(display, window); */
+	glutInit(&argc, argv);
 
 	n = snprintf(inbuf, sizeof(inbuf), "auth %s %s", username, password);
 	write(sockfd, inbuf, n + 2); 
