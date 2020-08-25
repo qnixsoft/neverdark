@@ -47,5 +47,6 @@ struct tty_driver tee_tty_driver = {
 	.flush = &buf_flush,
 	.echo = &tee_echo,
 	.init = &buf_init,
+	.reinit = &buf_init,
 };
 

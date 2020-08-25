@@ -88,10 +88,6 @@ gl_echo(struct tty *tty, char ch) {
 }
 
 static void
-gl_flush(struct tty *tty) {
-}
-
-static void
 gl_init(struct tty *tty) {
 	struct gl_tty_payload *pl = malloc(sizeof(struct gl_tty_payload));
 	pl->first = NULL;
@@ -115,9 +111,10 @@ struct tty_driver gl_tty_driver = {
 	.csic_bg = &gl_csic_bg,
 	.csic_end = &csic_nothing,
 	.csic_nil = &buf_csic_nil,
-	.flush = &gl_flush,
+	.flush = &csic_nothing,
 	.echo = &gl_echo,
 	.init = &gl_init,
+	.reinit = &csic_nothing,
 };
 
 void

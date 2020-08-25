@@ -169,7 +169,7 @@ void
 tty_proc(struct tty *tty, char *input) {
 	char *in;
 
-	tty->driver.init(tty);
+	tty->driver.reinit(tty);
         for (in = input; *in != '\0'; in++)
 		tty_proc_ch(tty, in);
 

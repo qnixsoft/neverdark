@@ -17,7 +17,8 @@ struct tty_driver {
 		   *csic_end,
 		   *csic_nil,
 		   *flush,
-		   *init;
+		   *init,
+		   *reinit;
 
 	tty_echo_cb *echo;
 
