@@ -1,12 +1,14 @@
 #include "tty.h"
 
+#include <GL/glut.h>
+
 struct glcolor {
 	float r, g, b;
 } glCol[] = {
 	{ .0, .0, .0 },
 	{ .75, .0, .0 },
 	{ .0, .75, .0 },
-	{ .75, .75, .0 },
+	{ .63, .59, .35 },
 	{ .0, .0, .75 },
 	{ .75, .0, .75 },
 	{ .0, .75, .75 },
@@ -14,9 +16,9 @@ struct glcolor {
 
 	{ .25, .25, .25 },
 	{ 1., .0, .0 },
-	{ .0, 1., .0 },
+	{ .32, .82, .54 },
 	{ 1., 1., .0 },
-	{ .0, .0, 1. },
+	{ .45, .61, .74 },
 	{ 1., .0, 1. },
 	{ .0, 1., 1. },
 	{ 1., 1., 1. },
@@ -60,13 +62,16 @@ gl_tty_append(struct tty *tty,
 	else
 		pl->first = fifo;
 
+	pl->last = fifo;
 	fifo->type = type;
 	fifo->item = item;
 }
 
 void
 gl_csic_fg(struct tty *tty) {
-	union gl_tty_item item = { .fg = &glCol[tty->csi.fg] };
+	struct glcolor *c = &glCol[tty->csi.fg];
+	/* fprintf(stderr, "tty fg %d (%f, %f, %f)\n", tty->csi.fg, c->r, c->g, c->b); */
+	union gl_tty_item item = { .fg = c };
 	gl_tty_append(tty, GLIT_FG, item);
 }
 
@@ -78,16 +83,20 @@ gl_csic_bg(struct tty *tty) {
 
 void
 gl_csic_end(struct tty *tty) {
-	union gl_tty_item fgi = { .fg = &glCol[7] };
-	union gl_tty_item bgi = { .bg = &glCol[0] };
-	gl_tty_append(tty, GLIT_FG, fgi);
-	gl_tty_append(tty, GLIT_BG, bgi);
+	/* union gl_tty_item fgi = { .fg = &glCol[7] }; */
+	/* union gl_tty_item bgi = { .bg = &glCol[0] }; */
+	/* gl_tty_append(tty, GLIT_FG, fgi); */
+	/* gl_tty_append(tty, GLIT_BG, bgi); */
 }
 
 void
 gl_echo(struct tty *tty, char ch) {
 	union gl_tty_item item = { .ch = ch };
 	gl_tty_append(tty, GLIT_CHAR, item);
+}
+
+static void
+gl_flush(struct tty *tty) {
 }
 
 static void
@@ -98,15 +107,68 @@ gl_init(struct tty *tty) {
 	tty->driver.payload = pl;
 }
 
+static void
+gl_csic_pre(struct tty *tty) {
+	union gl_tty_item fgi = { .fg = &glCol[7] };
+	union gl_tty_item bgi = { .bg = &glCol[0] };
+	gl_tty_append(tty, GLIT_FG, fgi);
+	gl_tty_append(tty, GLIT_BG, bgi);
+}
+
 struct tty_driver gl_tty_driver = {
-	.csic_pre = &csic_nothing,
+	/* .csic_pre = &csic_nothing, */
+	.csic_pre = &gl_csic_pre,
 	.csic_start = &csic_nothing,
 	.csic_fg = &gl_csic_fg,
 	.csic_bg = &gl_csic_bg,
 	.csic_end = &gl_csic_end,
 	.csic_nil = &buf_csic_nil,
-	.flush = &buf_flush,
+	.flush = &gl_flush,
 	.echo = &gl_echo,
 	.init = &gl_init,
 };
 
+void
+gl_tty_render(struct tty *tty) {
+	struct gl_tty_payload *pl
+		= (struct gl_tty_payload *) tty->driver.payload;
+
+	struct gl_tty_fifo *fifo = pl->first;
+	struct glcolor c = { 0., 0., 0. };
+	char ch;
+	float y = .95;
+	float x = -.95;
+
+	for (fifo = pl->first; fifo; fifo = fifo->next) {
+		switch (fifo->type) {
+		case GLIT_FG:
+			c = *fifo->item.fg;
+			glColor3f(c.r, c.g, c.b);
+			break;
+		case GLIT_BG:
+			/* c = *fifo->item.bg; */
+			/* glColor3f(c.r, c.g, c.b); */
+			/* glBegin(GL_QUADS); */
+			/* glVertex3f(x - 0.1, y - 0.1, -0.1); */
+			/* glVertex3f(x + 0.1, y - 0.1, -0.1); */
+			/* glVertex3f(x + 0.1, y + 0.1, -0.1); */
+			/* glVertex3f(x - 0.1, y + 0.1, -0.1); */
+			/* glEnd(); */
+			break;
+		case GLIT_CHAR:
+			ch = fifo->item.ch;
+			switch (ch) {
+			case '\n':
+				y -= .03;
+				x = -.95;
+				glRasterPos3f(-.95, y, 0.);
+				break;
+			default:
+				x += .02;
+				glRasterPos3f(x, y, 0.);
+				glutBitmapCharacter(GLUT_BITMAP_8_BY_13, ch);
+			}
+			continue;
+		}
+	}
+}

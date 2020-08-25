@@ -25,9 +25,12 @@ Colormap cmap;
 XSetWindowAttributes swa;
 GLXContext glc;
 XWindowAttributes gwa;
+struct tty gl_tty;
+
+void gl_tty_render(struct tty *tty);
 
 void DrawAQuad() {
-	glClearColor(1.0, 1.0, 1.0, 1.0);
+	glClearColor(.23, .25, .23, 1.0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	glMatrixMode(GL_PROJECTION);
@@ -38,15 +41,9 @@ void DrawAQuad() {
 	glLoadIdentity();
 	gluLookAt(0., 0., 10., 0., 0., 0., 0., 1., 0.);
 
-	glColor3f(0., 0., 0.);
+	glColor3f(.75, .76, .85);
 
-	char *c;
-	glRasterPos3f(-.75, .75, 0.);
-
-	for (c="hello world"; *c != '\0'; c++) 
-	{
-		glutBitmapCharacter(GLUT_BITMAP_TIMES_ROMAN_10, *c);
-	}
+	gl_tty_render(&gl_tty);
 } 
 
 int
@@ -122,15 +119,17 @@ main(int argc, char *argv[], char *envp[])
 	glc = glXCreateContext(display, vi, NULL, GL_TRUE);
 	glXMakeCurrent(display, window, glc);
 
-	glEnable(GL_DEPTH_TEST); 
 	glutInit(&argc, argv);
+
+	glEnable(GL_DEPTH_TEST); 
+	glDisable(GL_LIGHTING);
 
 	n = snprintf(inbuf, sizeof(inbuf), "auth %s %s", username, password);
 	write(sockfd, inbuf, n + 2); 
 
-	struct tty tee_tty, gl_tty;
+	struct tty tee_tty;
 	tty_init(&tee_tty, tee_tty_driver);
-	/* tty_init(&gl_tty, gl_tty_driver); */
+	tty_init(&gl_tty, gl_tty_driver);
 
 	for (;;) {
 		while (XPending(display)) {
@@ -165,7 +164,9 @@ main(int argc, char *argv[], char *envp[])
 				continue;
 			inbuf[ret] = '\0';
 			tty_proc(&tee_tty, inbuf);
-			/* tty_proc(&gl_tty, inbuf); */
+			tty_proc(&gl_tty, inbuf);
+			DrawAQuad(); 
+			glXSwapBuffers(display, window);
 		} else if (FD_ISSET(0, &rd)) {
 			char *ptr = fgets(inbuf, sizeof(inbuf), stdin);
 			if (ptr == NULL)
