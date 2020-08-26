@@ -29,7 +29,9 @@ struct tty gl_tty;
 
 void gl_tty_render(struct tty *tty);
 
-void DrawAQuad() {
+void redraw() {
+	glViewport(0, 0, gwa.width, gwa.height);
+
 	glClearColor(.23, .25, .23, 1.0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -40,8 +42,6 @@ void DrawAQuad() {
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 	gluLookAt(0., 0., 10., 0., 0., 0., 0., 1., 0.);
-
-	glColor3f(.75, .76, .85);
 
 	gl_tty_render(&gl_tty);
 } 
@@ -86,6 +86,9 @@ main(int argc, char *argv[], char *envp[])
 	echo();
 	endwin();
 
+	n = snprintf(inbuf, sizeof(inbuf), "auth %s %s", username, password);
+	write(sockfd, inbuf, n + 2); 
+
 	setvbuf(stdin, NULL, _IOLBF, 0);
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
@@ -120,11 +123,9 @@ main(int argc, char *argv[], char *envp[])
 	glXMakeCurrent(display, window, glc);
 
 	glutInit(&argc, argv);
+	/* glutReshapeFunc(reshape); */
 
 	glEnable(GL_DEPTH_TEST); 
-
-	n = snprintf(inbuf, sizeof(inbuf), "auth %s %s", username, password);
-	write(sockfd, inbuf, n + 2); 
 
 	struct tty tee_tty;
 	tty_init(&tee_tty, tee_tty_driver);
@@ -134,8 +135,7 @@ main(int argc, char *argv[], char *envp[])
 		while (XPending(display)) {
 			XNextEvent(display, &ev);
 			XGetWindowAttributes(display, window, &gwa);
-			glViewport(0, 0, gwa.width, gwa.height);
-			DrawAQuad(); 
+			redraw(); 
 			glXSwapBuffers(display, window);
 		}
 
@@ -164,7 +164,7 @@ main(int argc, char *argv[], char *envp[])
 			inbuf[ret] = '\0';
 			tty_proc(&tee_tty, inbuf);
 			tty_proc(&gl_tty, inbuf);
-			DrawAQuad(); 
+			redraw(); 
 			glXSwapBuffers(display, window);
 		} else if (FD_ISSET(0, &rd)) {
 			char *ptr = fgets(inbuf, sizeof(inbuf), stdin);

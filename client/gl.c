@@ -14,7 +14,7 @@ struct glcolor {
 	{ .25, .36, .37 },
 	{ .75, .76, .85 },
 
-	{ .25, .25, .25 },
+	{ .55, .52, .65 },
 	{ 1., .0, .0 },
 	{ .32, .82, .54 },
 	{ 1., 1., .0 },
@@ -43,7 +43,10 @@ struct gl_tty_fifo {
 
 struct gl_tty_payload {
 	struct gl_tty_fifo *first, *last;
+	unsigned nlines;
 };
+
+unsigned maxlines = 66;
 
 void
 gl_tty_append(struct tty *tty,
@@ -56,6 +59,8 @@ gl_tty_append(struct tty *tty,
 	struct gl_tty_fifo *fifo = malloc(sizeof(struct gl_tty_fifo));
 
 	fifo->next = NULL;
+	fifo->type = type;
+	fifo->item = item;
 
 	if (pl->last != NULL)
 		pl->last->next = fifo;
@@ -63,15 +68,11 @@ gl_tty_append(struct tty *tty,
 		pl->first = fifo;
 
 	pl->last = fifo;
-	fifo->type = type;
-	fifo->item = item;
 }
 
 void
 gl_csic_fg(struct tty *tty) {
-	struct glcolor *c = &glCol[tty->csi.fg];
-	/* fprintf(stderr, "tty fg %d (%f, %f, %f)\n", tty->csi.fg, c->r, c->g, c->b); */
-	union gl_tty_item item = { .fg = c };
+	union gl_tty_item item = { .fg = &glCol[tty->csi.fg] };
 	gl_tty_append(tty, GLIT_FG, item);
 }
 
@@ -84,7 +85,40 @@ gl_csic_bg(struct tty *tty) {
 void
 gl_echo(struct tty *tty, char ch) {
 	union gl_tty_item item = { .ch = ch };
+
 	gl_tty_append(tty, GLIT_CHAR, item);
+
+	if (ch == '\n') {
+		struct gl_tty_payload *pl
+			= (struct gl_tty_payload *) tty->driver.payload;
+
+		struct gl_tty_fifo *fifo = pl->first;
+
+		int wasnl = 0;
+
+		pl->nlines++;
+
+		if (pl->nlines < maxlines)
+			return;
+
+		for (; fifo && !wasnl; )
+		{
+			wasnl = fifo->type == GLIT_CHAR && fifo->item.ch == '\n';
+			pl->first = fifo->next;
+			free(fifo);
+
+			fifo = pl->first;
+
+			if (!fifo) {
+				pl->last = NULL;
+				break;
+			}
+
+		}
+
+		if (wasnl)
+			pl->nlines--;
+	}
 }
 
 static void
@@ -92,6 +126,7 @@ gl_init(struct tty *tty) {
 	struct gl_tty_payload *pl = malloc(sizeof(struct gl_tty_payload));
 	pl->first = NULL;
 	pl->last = NULL;
+	pl->nlines = 0;
 	tty->driver.payload = pl;
 }
 
@@ -104,7 +139,6 @@ gl_csic_pre(struct tty *tty) {
 }
 
 struct tty_driver gl_tty_driver = {
-	/* .csic_pre = &csic_nothing, */
 	.csic_pre = &gl_csic_pre,
 	.csic_start = &csic_nothing,
 	.csic_fg = &gl_csic_fg,
@@ -117,6 +151,14 @@ struct tty_driver gl_tty_driver = {
 	.reinit = &csic_nothing,
 };
 
+float ttyMinY = 1. - 0.025;
+float ttyLineY = .03;
+float ttyLineYT = .022;
+float ttyLineYB = .008;
+float ttyCharX = .02;
+float ttyCharXL = .005;
+float ttyCharXR = .015;
+
 void
 gl_tty_render(struct tty *tty) {
 	struct gl_tty_payload *pl
@@ -125,8 +167,8 @@ gl_tty_render(struct tty *tty) {
 	struct gl_tty_fifo *fifo = pl->first;
 	struct glcolor fg = glCol[7], bg = glCol[0];
 	char ch;
-	float y = .95;
-	float x = -.95;
+	float y = ttyMinY;
+	float x = -1.;
 
 	for (fifo = pl->first; fifo; fifo = fifo->next) {
 		switch (fifo->type) {
@@ -140,23 +182,28 @@ gl_tty_render(struct tty *tty) {
 			ch = fifo->item.ch;
 			switch (ch) {
 			case '\n':
-				y -= .03;
-				x = -.95;
-				glRasterPos3f(-.95, y, 0.);
+				y -= ttyLineY;
+				x = -1.;
+				glRasterPos3f(x, y, 0.);
 				break;
 			default:
+				if (x >= 1. - ttyCharX) {
+					y -= ttyLineY;
+					x = -1.;
+				}
+
 				glColor3f(bg.r, bg.g, bg.b);
 				glBegin(GL_QUADS);
-				glVertex3f(x + 0.016, y - 0.008, -0.1);
-				glVertex3f(x + 0.036, y - 0.008, -0.1);
-				glVertex3f(x + 0.036, y + 0.022, -0.1);
-				glVertex3f(x + 0.016, y + 0.022, -0.1);
+				glVertex3f(x - ttyCharXL, y - ttyLineYB, -0.1);
+				glVertex3f(x + ttyCharXR, y - ttyLineYB, -0.1);
+				glVertex3f(x + ttyCharXR, y + ttyLineYT, -0.1);
+				glVertex3f(x - ttyCharXL, y + ttyLineYT, -0.1);
 				glEnd();
 				glColor3f(fg.r, fg.g, fg.b);
 
-				x += .02;
 				glRasterPos3f(x, y, 0.);
 				glutBitmapCharacter(GLUT_BITMAP_8_BY_13, ch);
+				x += ttyCharX;
 
 			}
 			continue;
